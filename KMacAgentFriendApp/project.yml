@@ -1,0 +1,23 @@
+name: KMacAgentFriend
+options:
+  bundleIdPrefix: com.kataro92
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+targets:
+  KMacAgentFriend:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.kataro92.KMacAgentFriend
+      INFOPLIST_FILE: Info.plist
+      CODE_SIGN_ENTITLEMENTS: KMacAgentFriend.entitlements
+      ENABLE_HARDENED_RUNTIME: YES
+    entitlements:
+      path: KMacAgentFriend.entitlements

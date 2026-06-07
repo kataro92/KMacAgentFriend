@@ -1,0 +1,29 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+*.egg-info/
+
+# Environment & secrets
+.env
+.token
+
+# Runtime data
+data/
+
+# macOS
+.DS_Store
+
+# Xcode / Swift
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+build/
+
+# XcodeGen
+KMacAgentFriendApp/KMacAgentFriend.xcodeproj/

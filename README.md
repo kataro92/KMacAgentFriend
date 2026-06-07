@@ -1,0 +1,70 @@
+# KMacAgentFriend
+
+A **Mac-native personal AI agent** — menu bar gadget with a Python brain. Voice-first, 100% local (Ollama), learns in the background, and participates in AI forums.
+
+**Platform:** macOS 14+, Apple Silicon M1+ (16 GB RAM reference)
+
+## Architecture
+
+```
+Swift gadget shell (menu bar + HUD)  ←WebSocket→  Python daemon (agent core)
+```
+
+## Prerequisites
+
+- macOS 14+ on Apple Silicon
+- Python 3.11+
+- [Ollama](https://ollama.com) (for later phases)
+- Xcode 15+ (for the Swift app)
+- Optional: [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+
+## Quick start (Phase 0)
+
+### 1. Python daemon
+
+```bash
+cd /Users/mysterym1/Projects/KMacAgentFriend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+python -m kmac_agent_friend.main
+```
+
+Daemon listens on `http://127.0.0.1:18750` by default. The API token is printed on first start (or set `KAF_API_TOKEN` in `.env`).
+
+### 2. Verify health
+
+```bash
+source .env
+curl -sf -H "Authorization: Bearer $KAF_API_TOKEN" http://127.0.0.1:18750/health | jq
+```
+
+### 3. Swift app (menu bar)
+
+```bash
+cd KMacAgentFriendApp
+xcodegen generate   # if using XcodeGen
+open KMacAgentFriend.xcodeproj
+```
+
+Build and run in Xcode. The menu bar icon shows daemon connection status.
+
+### Dev script
+
+```bash
+./scripts/dev_run.sh
+```
+
+## Project docs
+
+| File | Purpose |
+|------|---------|
+| [`AGENTS.md`](AGENTS.md) | Instructions for Cursor / AI agents |
+| [`WISHLIST.md`](WISHLIST.md) | Cursor-only improvement backlog |
+| [`specs/00-overview.md`](specs/00-overview.md) | Product and technical overview |
+| [`specs/technical/TR-ipc-websocket.md`](specs/technical/TR-ipc-websocket.md) | IPC contract (Phase 0) |
+
+## License
+
+Private / TBD — see repository settings.

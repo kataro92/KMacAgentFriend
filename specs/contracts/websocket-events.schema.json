@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kmacagentfriend.local/contracts/websocket-events.json",
+  "title": "WebSocket events (Phase 0)",
+  "oneOf": [
+    { "$ref": "#/$defs/clientPing" },
+    { "$ref": "#/$defs/clientGetState" },
+    { "$ref": "#/$defs/serverPong" },
+    { "$ref": "#/$defs/serverState" },
+    { "$ref": "#/$defs/serverError" }
+  ],
+  "$defs": {
+    "clientPing": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ping" }
+      },
+      "additionalProperties": false
+    },
+    "clientGetState": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "get_state" }
+      },
+      "additionalProperties": false
+    },
+    "serverPong": {
+      "type": "object",
+      "required": ["type", "ts"],
+      "properties": {
+        "type": { "const": "pong" },
+        "ts": { "type": "number" },
+        "latency_ms": { "type": "number" }
+      }
+    },
+    "serverState": {
+      "type": "object",
+      "required": ["type", "status"],
+      "properties": {
+        "type": { "const": "state" },
+        "status": {
+          "enum": ["idle", "listening", "thinking", "speaking", "acting", "background", "error"]
+        },
+        "current_action": { "type": "string" },
+        "uptime_seconds": { "type": "number" },
+        "connected_clients": { "type": "integer" },
+        "background_task": { "type": "string" }
+      }
+    },
+    "serverError": {
+      "type": "object",
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}
