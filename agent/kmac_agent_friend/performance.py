@@ -41,9 +41,11 @@ class InferenceGate:
     @contextlib.asynccontextmanager
     async def slot(self, label: str) -> AsyncIterator[None]:
         self._waiting += 1
+        acquired = False
         try:
             async with self._lock:
-                self._waiting -= 1
+                acquired = True
+                self._waiting = max(0, self._waiting - 1)
                 self._active = label
                 self._started_at = time.time()
                 try:
@@ -51,11 +53,10 @@ class InferenceGate:
                 finally:
                     self._active = ""
                     self._started_at = 0.0
-        except BaseException:
-            # Ensure the waiting counter is corrected if cancelled before acquire.
-            if self._active != label:
-                self._waiting = max(0, self._waiting - 1) if self._waiting else 0
-            raise
+        finally:
+            # Cancelled before acquiring the lock: undo the pending increment.
+            if not acquired:
+                self._waiting = max(0, self._waiting - 1)
 
     def status(self) -> GateStatus:
         return GateStatus(
