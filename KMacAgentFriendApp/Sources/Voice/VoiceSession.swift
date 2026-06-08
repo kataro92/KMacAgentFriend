@@ -6,13 +6,11 @@ final class VoiceSession: ObservableObject {
     @Published var statusMessage: String?
 
     private weak var connection: DaemonConnection?
-    private weak var hud: FloatingPanelController?
     private let recorder = AudioRecorder()
     private let ptt = PTTController()
 
-    func bind(_ connection: DaemonConnection, hud: FloatingPanelController) {
+    func bind(_ connection: DaemonConnection) {
         self.connection = connection
-        self.hud = hud
     }
 
     func start() {
@@ -38,7 +36,6 @@ final class VoiceSession: ObservableObject {
         }
 
         do {
-            hud?.show()
             try recorder.start()
             isRecording = true
             statusMessage = "Listening…"

@@ -3,7 +3,6 @@ import SwiftUI
 struct MenuBarView: View {
     @EnvironmentObject private var connection: DaemonConnection
     @EnvironmentObject private var voice: VoiceSession
-    @EnvironmentObject private var hud: FloatingPanelController
     @Environment(\.openWindow) private var openWindow
     @State private var showCameraConfirm = false
     @State private var visionStatus: String?
@@ -120,7 +119,6 @@ struct MenuBarView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button(hud.isVisible ? "Hide HUD" : "Show HUD") { hud.toggle() }
             Button("Capture Vision…") { showCameraConfirm = true }
             if let visionStatus {
                 Text(visionStatus)
