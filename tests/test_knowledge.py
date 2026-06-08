@@ -11,7 +11,7 @@ def test_chunk_text_short():
 
 
 def test_chunk_text_splits_long():
-    text = "\n\n".join("paragraph %d " % i * 30 for i in range(10))
+    text = "\n\n".join(f"paragraph {i} " * 30 for i in range(10))
     chunks = chunk_text(text, max_chars=400, overlap=50)
     assert len(chunks) > 1
     assert all(len(c) <= 500 for c in chunks)

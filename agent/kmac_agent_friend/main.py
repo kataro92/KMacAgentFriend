@@ -38,7 +38,7 @@ from kmac_agent_friend.settings_store import (
 )
 from kmac_agent_friend.state import AgentStatus, agent_state
 from kmac_agent_friend.tools import list_dir, read_file, run_shell, write_file
-from kmac_agent_friend.vision import analyze_image
+from kmac_agent_friend.vision import analyze_image, maybe_persist_frame
 from kmac_agent_friend.voice import (
     chat_reply,
     model_status,
@@ -304,6 +304,12 @@ async def background_status(_: str = Depends(verify_token)):
 
 @app.post("/api/background/start")
 async def background_start(body: BackgroundStartRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.background.handlers import build_tick_handler
+
+    settings = get_settings()
+    handler = build_tick_handler(body.task, settings)
+    if handler is not None:
+        background_worker.set_tick_handler(handler)
     await background_worker.start(body.task, interval=body.interval_seconds)
     agent_state.background_task = body.task
     await _set_status(AgentStatus.BACKGROUND, action=body.task)
@@ -448,6 +454,9 @@ async def vision_analyze(
         return {"ok": False, "error": "Empty image file"}
 
     settings = get_settings()
+    saved = maybe_persist_frame(image_bytes, settings)
+    if saved is not None:
+        await _record_activity("info", "vision", "Frame persisted", {"path": str(saved)})
     await _set_status(AgentStatus.ACTING, action="vision")
     try:
         result = await analyze_image(
@@ -460,7 +469,11 @@ async def vision_analyze(
             await _set_status(AgentStatus.ERROR, action=result.error)
             return {"ok": False, "error": result.error}
         await ws_manager.broadcast({"type": "reply", "text": result.description})
-        return {"ok": True, "description": result.description}
+        return {
+            "ok": True,
+            "description": result.description,
+            "frame_persisted": saved is not None,
+        }
     finally:
         await _set_status(AgentStatus.IDLE)
 
@@ -573,6 +586,120 @@ async def knowledge_ingest(
         "skipped": report.skipped,
         "errors": report.errors,
     }
+
+
+class AutopilotPolicyRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/autopilot/policy")
+async def autopilot_policy(_: str = Depends(verify_token)):
+    from kmac_agent_friend.autopilot import AutopilotPolicy
+
+    settings = get_settings()
+    policy = AutopilotPolicy(settings)
+    return {
+        "ok": True,
+        "enabled": policy.enabled,
+        "allowed_actions": policy.allowed_actions(),
+    }
+
+
+@app.post("/api/autopilot/policy")
+async def set_autopilot_policy(body: AutopilotPolicyRequest, _: str = Depends(verify_token)):
+    settings = get_settings()
+    patch_user_settings(settings.kaf_data_dir, UserSettingsPatch(autopilot_enabled=body.enabled))
+    reload_settings()
+    await _record_activity(
+        "info", "autopilot", "Autopilot policy updated", {"enabled": body.enabled}
+    )
+    from kmac_agent_friend.autopilot import AutopilotPolicy
+
+    policy = AutopilotPolicy(get_settings())
+    return {"ok": True, "enabled": policy.enabled, "allowed_actions": policy.allowed_actions()}
+
+
+@app.get("/api/autopilot/decisions")
+async def autopilot_decisions(limit: int = 100, _: str = Depends(verify_token)):
+    from kmac_agent_friend.autopilot import DecisionAuditLog
+
+    settings = get_settings()
+    log = DecisionAuditLog.from_settings(settings)
+    return {"ok": True, "decisions": log.recent(limit=min(limit, 500))}
+
+
+class MissionCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+
+
+class MissionUpdateRequest(BaseModel):
+    status: str | None = None
+    progress: int | None = None
+    note: str | None = None
+
+
+@app.get("/api/missions")
+async def missions_list(status: str | None = None, _: str = Depends(verify_token)):
+    from kmac_agent_friend.missions import MissionStatus, MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    status_filter = None
+    if status:
+        try:
+            status_filter = MissionStatus(status)
+        except ValueError:
+            return {"ok": False, "error": f"Unknown status: {status}"}
+    return {"ok": True, "missions": [m.to_dict() for m in store.list(status=status_filter)]}
+
+
+@app.post("/api/missions")
+async def missions_create(body: MissionCreateRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.missions import MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    try:
+        mission = store.create(body.title, body.description)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    await _record_activity("info", "missions", "Mission created", {"id": mission.id})
+    return {"ok": True, "mission": mission.to_dict()}
+
+
+@app.patch("/api/missions/{mission_id}")
+async def missions_update(
+    mission_id: str,
+    body: MissionUpdateRequest,
+    _: str = Depends(verify_token),
+):
+    from kmac_agent_friend.missions import MissionStatus, MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    status = None
+    if body.status:
+        try:
+            status = MissionStatus(body.status)
+        except ValueError:
+            return {"ok": False, "error": f"Unknown status: {body.status}"}
+    mission = store.update(
+        mission_id, status=status, progress=body.progress, note=body.note
+    )
+    if mission is None:
+        return {"ok": False, "error": "Mission not found"}
+    return {"ok": True, "mission": mission.to_dict()}
+
+
+@app.delete("/api/missions/{mission_id}")
+async def missions_delete(mission_id: str, _: str = Depends(verify_token)):
+    from kmac_agent_friend.missions import MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    deleted = store.delete(mission_id)
+    return {"ok": deleted, "error": "" if deleted else "Mission not found"}
 
 
 @app.get("/api/reincarnation/export")
