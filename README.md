@@ -69,7 +69,7 @@ ollama pull nomic-embed-text          # local embeddings
 pip install -e ".[memory]"            # ChromaDB backend (SQLite fallback otherwise)
 ```
 
-Drop reference files under `~/Library/Application Support/KMacAgentFriend/knowledge/<domain>/` and run ingestion (`POST /api/knowledge/ingest`). Memories and conversations can be exported/imported as a portable "reincarnation" bundle.
+Drop reference files under `data/knowledge/<domain>/` in the project folder and run ingestion (`POST /api/knowledge/ingest`). Memories and conversations can be exported/imported as a portable "reincarnation" bundle.
 
 ### Run without Ollama (UI dev)
 

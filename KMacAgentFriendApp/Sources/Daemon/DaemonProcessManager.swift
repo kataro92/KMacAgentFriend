@@ -90,7 +90,7 @@ final class DaemonProcessManager: ObservableObject {
         proc.currentDirectoryURL = root
         proc.environment = Self.daemonEnvironment(projectRoot: root)
         proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = Self.daemonLogHandle()
+        proc.standardError = Self.daemonLogHandle(projectRoot: root)
 
         do {
             try proc.run()
@@ -256,9 +256,8 @@ final class DaemonProcessManager: ObservableObject {
         try? await Task.sleep(nanoseconds: 500_000_000)
     }
 
-    private static func daemonLogHandle() -> FileHandle {
-        let logDir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Logs/KMacAgentFriend", isDirectory: true)
+    private static func daemonLogHandle(projectRoot: URL) -> FileHandle {
+        let logDir = AppDataPaths.logsDirectory(projectRoot: projectRoot)
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         let logURL = logDir.appendingPathComponent("daemon.log")
         if !FileManager.default.fileExists(atPath: logURL.path) {
@@ -286,10 +285,14 @@ final class DaemonProcessManager: ObservableObject {
             "VIRTUAL_ENV": venv.path,
             "PATH": "\(venv.path)/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         ]
-        for key in ["KAF_API_TOKEN", "KAF_DATA_DIR", "KAF_PROJECT_ROOT", "OLLAMA_HOST", "OLLAMA_MODEL", "HF_TOKEN", "WHISPER_MODEL"] {
+        env["KAF_DATA_DIR"] = AppDataPaths.dataDirectory(projectRoot: projectRoot).path
+        for key in ["KAF_API_TOKEN", "KAF_PROJECT_ROOT", "OLLAMA_HOST", "OLLAMA_MODEL", "HF_TOKEN", "WHISPER_MODEL"] {
             if let value = inherited[key], !value.isEmpty {
                 env[key] = value
             }
+        }
+        if let override = inherited["KAF_DATA_DIR"], !override.isEmpty {
+            env["KAF_DATA_DIR"] = override
         }
         for key in ["HF_TOKEN", "WHISPER_MODEL"] {
             if env[key] != nil { continue }
@@ -354,12 +357,6 @@ final class DaemonProcessManager: ObservableObject {
     }
 
     static func readApiToken() -> String? {
-        if let env = ProcessInfo.processInfo.environment["KAF_API_TOKEN"], !env.isEmpty {
-            return env
-        }
-        let tokenPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/KMacAgentFriend/.api_token")
-        return try? String(contentsOf: tokenPath, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        AppDataPaths.resolveApiToken()
     }
 }

@@ -79,7 +79,12 @@ except ImportError:
     sys.exit(0)
 
 async def main():
-    token = open(os.path.expanduser("~/Library/Application Support/KMacAgentFriend/.api_token")).read().strip()
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    token_path = root / "data" / ".api_token"
+    if not token_path.is_file():
+        token_path = Path.home() / "Library/Application Support/KMacAgentFriend/.api_token"
+    token = token_path.read_text(encoding="utf-8").strip()
     uri = f"ws://127.0.0.1:18750/ws?token={token}"
     async with websockets.connect(uri) as ws:
         first = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))

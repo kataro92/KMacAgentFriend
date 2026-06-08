@@ -575,9 +575,7 @@ struct ControlPanelView: View {
     }
 
     private var tokenPreview: String {
-        let path = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/KMacAgentFriend/.api_token")
-        guard let token = try? String(contentsOf: path, encoding: .utf8), token.count > 8 else {
+        guard let token = AppDataPaths.resolveApiToken(), token.count > 8 else {
             return "not found"
         }
         return String(token.prefix(4)) + "…" + String(token.suffix(4))

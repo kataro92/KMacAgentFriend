@@ -120,21 +120,11 @@ final class DaemonClient {
     }
 
     private var apiToken: String {
-        if let env = ProcessInfo.processInfo.environment["KAF_API_TOKEN"], !env.isEmpty {
-            return env
+        let token = AppDataPaths.resolveApiToken() ?? ""
+        if !token.isEmpty, KeychainStore.apiToken?.isEmpty != false {
+            KeychainStore.storeAPIToken(token)
         }
-        // Prefer the Keychain, then fall back to the on-disk token file and cache it.
-        if let stored = KeychainStore.apiToken, !stored.isEmpty {
-            return stored
-        }
-        let tokenPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/KMacAgentFriend/.api_token")
-        let fileToken = (try? String(contentsOf: tokenPath, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !fileToken.isEmpty {
-            KeychainStore.storeAPIToken(fileToken)
-        }
-        return fileToken
+        return token
     }
 
     func fetchSettings() async throws -> SettingsPayload {
