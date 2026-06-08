@@ -314,6 +314,19 @@ async def ping(_: str = Depends(verify_token)):
     return {"pong": True, "ts": time.time()}
 
 
+@app.get("/api/security/audit")
+async def security_audit(_: str = Depends(verify_token)):
+    from kmac_agent_friend.security import audit_sandbox
+
+    settings = get_settings()
+    findings = audit_sandbox(settings)
+    return {
+        "ok": all(f.level != "error" for f in findings),
+        "findings": [f.to_dict() for f in findings],
+        "tool_rate_limit_per_minute": settings.tool_rate_limit_per_minute,
+    }
+
+
 @app.get("/api/mcp/status")
 async def mcp_status(_: str = Depends(verify_token)):
     from kmac_agent_friend.mcp import load_server_configs
