@@ -532,6 +532,97 @@ async def memory_search(body: MemorySearchRequest, _: str = Depends(verify_token
     }
 
 
+@app.get("/api/knowledge/domains")
+async def knowledge_domains(_: str = Depends(verify_token)):
+    from kmac_agent_friend.knowledge import KnowledgeIngestor, knowledge_root
+
+    settings = get_settings()
+    ingestor = KnowledgeIngestor(settings)
+    return {
+        "ok": True,
+        "root": str(knowledge_root(settings)),
+        "domains": ingestor.domains(),
+    }
+
+
+class KnowledgeIngestRequest(BaseModel):
+    force: bool = False
+
+
+@app.post("/api/knowledge/ingest")
+async def knowledge_ingest(
+    body: KnowledgeIngestRequest | None = None,
+    _: str = Depends(verify_token),
+):
+    from kmac_agent_friend.knowledge import KnowledgeIngestor
+
+    settings = get_settings()
+    ingestor = KnowledgeIngestor(settings)
+    report = await ingestor.ingest_all(force=bool(body and body.force))
+    await _record_activity(
+        "info",
+        "knowledge",
+        "Knowledge ingestion run",
+        {"ingested": report.files_ingested, "chunks": report.chunks_added},
+    )
+    return {
+        "ok": report.ok,
+        "files_scanned": report.files_scanned,
+        "files_ingested": report.files_ingested,
+        "chunks_added": report.chunks_added,
+        "skipped": report.skipped,
+        "errors": report.errors,
+    }
+
+
+@app.get("/api/reincarnation/export")
+async def reincarnation_export(_: str = Depends(verify_token)):
+    from kmac_agent_friend.reincarnation import export_bundle
+
+    settings = get_settings()
+    bundle = export_bundle(settings)
+    await _record_activity(
+        "info",
+        "reincarnation",
+        "Exported reincarnation bundle",
+        {"memories": len(bundle["memories"]), "conversations": len(bundle["conversations"])},
+    )
+    return {"ok": True, "bundle": bundle}
+
+
+class ReincarnationImportRequest(BaseModel):
+    bundle: dict[str, Any]
+    apply_settings: bool = True
+
+
+@app.post("/api/reincarnation/import")
+async def reincarnation_import(
+    body: ReincarnationImportRequest,
+    _: str = Depends(verify_token),
+):
+    from kmac_agent_friend.reincarnation import import_bundle
+
+    settings = get_settings()
+    report = import_bundle(settings, body.bundle, apply_settings=body.apply_settings)
+    if report.settings_applied:
+        reload_settings()
+    await _record_activity(
+        "info",
+        "reincarnation",
+        "Imported reincarnation bundle",
+        {"memories": report.memories, "messages": report.messages},
+    )
+    return {
+        "ok": report.ok,
+        "conversations": report.conversations,
+        "messages": report.messages,
+        "memories": report.memories,
+        "knowledge": report.knowledge,
+        "settings_applied": report.settings_applied,
+        "errors": report.errors,
+    }
+
+
 class ChatRequest(BaseModel):
     message: str
     use_tools: bool = False

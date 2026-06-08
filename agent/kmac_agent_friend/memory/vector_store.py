@@ -133,6 +133,59 @@ class LongTermMemory:
         scored.sort(key=lambda r: r.score, reverse=True)
         return scored[: max(0, k)]
 
+    def export_records(self) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, text, embedding, metadata, created_at
+                FROM memories WHERE collection = ?
+                """,
+                (self.collection,),
+            ).fetchall()
+        records: list[dict] = []
+        for row in rows:
+            try:
+                embedding = json.loads(row["embedding"])
+                metadata = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            records.append(
+                {
+                    "id": row["id"],
+                    "text": row["text"],
+                    "embedding": embedding,
+                    "metadata": metadata,
+                    "created_at": row["created_at"],
+                }
+            )
+        return records
+
+    def import_records(self, records: list[dict]) -> int:
+        imported = 0
+        with self._connect() as conn:
+            for rec in records:
+                text = str(rec.get("text", "")).strip()
+                embedding = rec.get("embedding")
+                if not text or not isinstance(embedding, list) or not embedding:
+                    continue
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO memories
+                        (id, collection, text, embedding, metadata, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(rec.get("id") or uuid4().hex),
+                        self.collection,
+                        text,
+                        json.dumps(embedding),
+                        json.dumps(rec.get("metadata") or {}),
+                        float(rec.get("created_at", time.time())),
+                    ),
+                )
+                imported += 1
+        return imported
+
     def count(self) -> int:
         with self._connect() as conn:
             row = conn.execute(

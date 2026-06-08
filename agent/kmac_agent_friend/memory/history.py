@@ -126,6 +126,72 @@ class ConversationStore:
             for row in rows
         ]
 
+    def export_conversations(self) -> list[dict]:
+        with self._connect() as conn:
+            convs = conn.execute(
+                "SELECT id, title, created_at, updated_at FROM conversations ORDER BY created_at"
+            ).fetchall()
+            result: list[dict] = []
+            for conv in convs:
+                msgs = conn.execute(
+                    """
+                    SELECT role, content, created_at FROM messages
+                    WHERE conversation_id = ? ORDER BY created_at
+                    """,
+                    (conv["id"],),
+                ).fetchall()
+                result.append(
+                    {
+                        "id": conv["id"],
+                        "title": conv["title"],
+                        "created_at": conv["created_at"],
+                        "updated_at": conv["updated_at"],
+                        "messages": [
+                            {
+                                "role": m["role"],
+                                "content": m["content"],
+                                "created_at": m["created_at"],
+                            }
+                            for m in msgs
+                        ],
+                    }
+                )
+        return result
+
+    def import_conversations(self, conversations: list[dict]) -> int:
+        imported = 0
+        with self._connect() as conn:
+            for conv in conversations:
+                conv_id = str(conv.get("id") or uuid4().hex)
+                now = time.time()
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        conv_id,
+                        str(conv.get("title", conv_id)),
+                        float(conv.get("created_at", now)),
+                        float(conv.get("updated_at", now)),
+                    ),
+                )
+                for msg in conv.get("messages", []):
+                    conn.execute(
+                        """
+                        INSERT INTO messages (conversation_id, role, content, created_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            conv_id,
+                            str(msg.get("role", "user")),
+                            str(msg.get("content", "")),
+                            float(msg.get("created_at", time.time())),
+                        ),
+                    )
+                    imported += 1
+        return imported
+
     def new_conversation(self, title: str = "") -> str:
         conv_id = uuid4().hex
         now = time.time()
