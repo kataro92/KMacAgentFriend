@@ -11,7 +11,7 @@ struct SettingsView: View {
                 LabeledContent("Token", value: tokenPreview)
             }
             Section("About") {
-                Text("KMacAgentFriend v0.1.0 — Phase 0")
+                Text("KMacAgentFriend v0.1.0 — Phase 1")
                 Text("Start daemon: make dev")
                     .font(.caption)
                     .foregroundStyle(.secondary)

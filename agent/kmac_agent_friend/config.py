@@ -6,6 +6,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +24,27 @@ class Settings(BaseSettings):
 
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2"
+    ollama_vlm_model: str = "llava"
+    moltbook_url: str = ""
+    whisper_model: str = "mlx-community/whisper-large-v3-turbo"
+    kaf_project_dirs: str = ""
+    background_interval_seconds: float = 120.0
+
+    @field_validator("kaf_data_dir", mode="before")
+    @classmethod
+    def _default_data_dir(cls, value: object) -> object:
+        if value is None:
+            return DEFAULT_DATA_DIR
+        if isinstance(value, str) and not value.strip():
+            return DEFAULT_DATA_DIR
+        return value
+
+    @field_validator("kaf_api_token", mode="before")
+    @classmethod
+    def _empty_api_token(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return ""
+        return value
 
     @property
     def sandbox_dir(self) -> Path:

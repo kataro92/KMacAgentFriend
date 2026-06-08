@@ -5,8 +5,12 @@
   "oneOf": [
     { "$ref": "#/$defs/clientPing" },
     { "$ref": "#/$defs/clientGetState" },
+    { "$ref": "#/$defs/clientPttStart" },
+    { "$ref": "#/$defs/clientPttEnd" },
     { "$ref": "#/$defs/serverPong" },
     { "$ref": "#/$defs/serverState" },
+    { "$ref": "#/$defs/serverTranscript" },
+    { "$ref": "#/$defs/serverReply" },
     { "$ref": "#/$defs/serverError" }
   ],
   "$defs": {
@@ -23,6 +27,22 @@
       "required": ["type"],
       "properties": {
         "type": { "const": "get_state" }
+      },
+      "additionalProperties": false
+    },
+    "clientPttStart": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ptt_start" }
+      },
+      "additionalProperties": false
+    },
+    "clientPttEnd": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ptt_end" }
       },
       "additionalProperties": false
     },
@@ -47,6 +67,23 @@
         "uptime_seconds": { "type": "number" },
         "connected_clients": { "type": "integer" },
         "background_task": { "type": "string" }
+      }
+    },
+    "serverTranscript": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "transcript" },
+        "text": { "type": "string" },
+        "language": { "type": "string" }
+      }
+    },
+    "serverReply": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "reply" },
+        "text": { "type": "string" }
       }
     },
     "serverError": {

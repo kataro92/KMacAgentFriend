@@ -8,46 +8,46 @@ Priority: **P0** (next) · **P1** (soon) · **P2** (later)
 
 ## Phase 1 — Voice
 
-- [ ] **P0** Integrate mlx-whisper sidecar for EN + VI STT
-- [ ] **P0** Push-to-talk global hotkey (Swift)
+- [x] **P0** Integrate mlx-whisper sidecar for EN + VI STT
+- [x] **P0** Push-to-talk global hotkey (Swift)
 - [ ] **P1** Wake word (Porcupine or openWakeWord)
-- [ ] **P1** Local TTS via `say` + Vietnamese voice selection
+- [x] **P1** Local TTS via `say` + Vietnamese voice selection
 - [ ] **P1** Barge-in: stop TTS when user speaks
 
 ## Phase 2 — Tools & safety
 
-- [ ] **P0** Sandboxed file tools (project dirs + `~/Library/Application Support/KMacAgentFriend/sandbox`)
-- [ ] **P0** Confirmation sheet in Swift for destructive actions
-- [ ] **P0** Accessibility text injection (AXUIElement)
-- [ ] **P1** CLI-first tool layer (git, docker via shell before MCP)
-- [ ] **P1** Command blocklist (`sudo`, `rm -rf`, etc.)
+- [x] **P0** Sandboxed file tools (project dirs + `~/Library/Application Support/KMacAgentFriend/sandbox`)
+- [x] **P0** Confirmation sheet in Swift for destructive actions
+- [x] **P0** Accessibility text injection (AXUIElement)
+- [x] **P1** CLI-first tool layer (git, docker via shell before MCP)
+- [x] **P1** Command blocklist (`sudo`, `rm -rf`, etc.)
 
 ## Phase 3 — Memory & agent core
 
-- [ ] **P0** SQLite conversation history
+- [x] **P0** SQLite conversation history
 - [ ] **P1** ChromaDB long-term memory + Ollama embeddings
-- [ ] **P1** Ollama chat runner with tool loop
+- [x] **P1** Ollama chat runner with tool loop
 - [ ] **P2** Knowledge domain files + ingestion worker
 - [ ] **P2** Reincarnation export/import
 
 ## Phase 4 — Vision
 
-- [ ] **P1** Camera confirm gate (voice + click)
-- [ ] **P1** Ollama VLM (llava / moondream) on-demand
+- [x] **P1** Camera confirm gate (voice + click)
+- [x] **P1** Ollama VLM (llava / moondream) on-demand
 - [ ] **P2** No frame persistence by default
 
 ## Phase 5 — Background & forum
 
-- [ ] **P1** Background worker with menu bar activity indicator
-- [ ] **P1** Moltbook client (fresh implementation)
-- [ ] **P1** Forum content sanitizer
+- [x] **P1** Background worker with menu bar activity indicator
+- [x] **P1** Moltbook client (fresh implementation)
+- [x] **P1** Forum content sanitizer
 - [ ] **P2** Career missions port
 - [ ] **P2** Autopilot policy UI
 
 ## UI / gadget
 
-- [ ] **P0** Pixel robot HUD head with status stats
-- [ ] **P1** Full dashboard panel (brain, limbs, chat, knowledge)
+- [x] **P0** Pixel robot HUD head with status stats
+- [x] **P1** Full dashboard panel (brain, limbs, chat, knowledge)
 - [ ] **P1** Sprite states: idle, listening, thinking, acting, error
 - [ ] **P2** Focus mode fullscreen avatar
 
@@ -60,7 +60,7 @@ Priority: **P0** (next) · **P1** (soon) · **P2** (later)
 
 ## Developer experience
 
-- [ ] **P0** `make dev` — start daemon + print token
+- [x] **P0** `make dev` — start daemon + print token
 - [ ] **P1** Mock daemon for Swift UI without Ollama
 - [ ] **P1** GitHub Actions: pytest + swift build
 - [ ] **P2** Spec template generator script

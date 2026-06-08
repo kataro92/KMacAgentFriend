@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import enum
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 
-class AgentStatus(str, enum.Enum):
+class AgentStatus(StrEnum):
     IDLE = "idle"
     LISTENING = "listening"
     THINKING = "thinking"

@@ -35,14 +35,22 @@ KMacAgentFriend/
 
 | Phase | Deliverable |
 |-------|-------------|
-| **0** (current) | Daemon + IPC + menu bar connection status |
-| 1 | Voice loop (PTT, STT, TTS) |
-| 2 | Tools + sandbox + Accessibility |
-| 3 | Memory + CLI/MCP tools |
-| 4 | Camera + VLM |
+| **0** | Daemon + IPC + menu bar connection status |
+| **1** | Voice loop (PTT, STT, TTS) |
+| **2** | Tools + sandbox + Accessibility |
+| **3** | Memory + CLI/MCP tools |
+| **4** | Camera + VLM |
+| **5** | Background + Moltbook |
+| **6** | Full dashboard + remaining features |
 | 5 | Background + Moltbook |
 | 6 | Full dashboard + remaining features |
 
 ## Spec index
 
 - [`technical/TR-ipc-websocket.md`](technical/TR-ipc-websocket.md) — Phase 0 IPC
+- [`technical/TR-voice-loop.md`](technical/TR-voice-loop.md) — Phase 1 voice
+- [`technical/TR-tools-sandbox.md`](technical/TR-tools-sandbox.md) — Phase 2 sandboxed file tools
+- [`technical/TR-memory.md`](technical/TR-memory.md) — Phase 3 conversation history
+- [`technical/TR-vision.md`](technical/TR-vision.md) — Phase 4 camera + VLM
+- [`technical/TR-dashboard.md`](technical/TR-dashboard.md) — Phase 6 dashboard
+- [`technical/TR-memory.md`](technical/TR-memory.md) — Phase 3 conversation history

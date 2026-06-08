@@ -18,12 +18,12 @@ Swift gadget shell (menu bar + HUD)  ←WebSocket→  Python daemon (agent core)
 - Xcode 15+ (for the Swift app)
 - Optional: [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 
-## Quick start (Phase 0)
+## Quick start (Phase 1)
 
 ### 1. Python daemon
 
 ```bash
-cd /Users/mysterym1/Projects/KMacAgentFriend
+# From the repository root
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -50,6 +50,14 @@ open KMacAgentFriend.xcodeproj
 
 Build and run in Xcode. The menu bar icon shows daemon connection status.
 
+### 4. Voice (optional)
+
+```bash
+pip install -e ".[voice]"   # mlx-whisper for local STT (Apple Silicon)
+```
+
+Hold **Right Option** or use **Hold to Talk** in the menu bar. Audio is transcribed locally, sent to Ollama, and spoken via macOS `say`.
+
 ### Dev script
 
 ```bash
@@ -58,12 +66,14 @@ Build and run in Xcode. The menu bar icon shows daemon connection status.
 
 ## Project docs
 
-| File | Purpose |
-|------|---------|
-| [`AGENTS.md`](AGENTS.md) | Instructions for Cursor / AI agents |
-| [`WISHLIST.md`](WISHLIST.md) | Cursor-only improvement backlog |
-| [`specs/00-overview.md`](specs/00-overview.md) | Product and technical overview |
-| [`specs/technical/TR-ipc-websocket.md`](specs/technical/TR-ipc-websocket.md) | IPC contract (Phase 0) |
+
+| File                                                                         | Purpose                             |
+| ---------------------------------------------------------------------------- | ----------------------------------- |
+| `[AGENTS.md](AGENTS.md)`                                                     | Instructions for Cursor / AI agents |
+| `[WISHLIST.md](WISHLIST.md)`                                                 | Cursor-only improvement backlog     |
+| `[specs/00-overview.md](specs/00-overview.md)`                               | Product and technical overview      |
+| `[specs/technical/TR-ipc-websocket.md](specs/technical/TR-ipc-websocket.md)` | IPC contract (Phase 0)              |
+
 
 ## License
 

@@ -12,6 +12,7 @@ dist/
 # Environment & secrets
 .env
 .token
+.api_token
 
 # Runtime data
 data/

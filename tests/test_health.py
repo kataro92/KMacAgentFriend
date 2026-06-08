@@ -1,9 +1,7 @@
-import os
 from unittest.mock import patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-
 from kmac_agent_friend.config import get_settings, resolve_api_token
 from kmac_agent_friend.main import app
 

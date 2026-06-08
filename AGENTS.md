@@ -76,4 +76,4 @@ cd KMacAgentFriendApp && xcodebuild -scheme KMacAgentFriend -configuration Debug
 
 ## Current phase
 
-**Phase 0:** Swift shell + Python daemon + IPC (health, WebSocket ping, connection status in menu bar).
+**Phase 1:** Voice loop — PTT hotkey, mlx-whisper STT, Ollama chat, macOS `say` TTS.
