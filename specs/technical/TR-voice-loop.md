@@ -22,6 +22,10 @@ Push-to-talk voice loop: capture audio in Swift, transcribe locally, get an Olla
 
 **TR-VOICE-008** WebSocket clients MAY send `ptt_start` / `ptt_end` to update state without audio.
 
+**TR-VOICE-009** Swift SHALL offer an optional always-listening wake-word trigger (on-device energy detector; swappable for openWakeWord/Porcupine) that starts a turn hands-free.
+
+**TR-VOICE-010** Barge-in: `POST /api/voice/stop` and the `barge_in` / `ptt_start`-while-speaking WebSocket paths SHALL interrupt in-progress TTS, broadcasting `tts_stopped`.
+
 ## Constraints
 
 - SHALL NOT use cloud STT/TTS
@@ -69,7 +73,5 @@ curl -sf -H "Authorization: Bearer $TOKEN" \
 
 ## Not included (Phase 1)
 
-- Wake word
-- Barge-in during TTS
 - Streaming STT partial results
 - Audio over WebSocket

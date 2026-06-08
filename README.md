@@ -60,7 +60,20 @@ For a one-off daemon in Terminal (optional): `make dev`
 pip install -e ".[voice]"   # mlx-whisper for local STT (Apple Silicon)
 ```
 
-Hold **Right Option** or use **Hold to Talk** in the menu bar. Audio is transcribed locally, sent to Ollama, and spoken via macOS `say`.
+Hold **Right Option** or use **Hold to Talk** in the menu bar. Audio is transcribed locally, sent to Ollama, and spoken via macOS `say`. Enable **Wake word** in the menu bar for hands-free turns; speaking or pressing PTT during a reply **barges in** and stops playback.
+
+### 5. Long-term memory & knowledge (optional)
+
+```bash
+ollama pull nomic-embed-text          # local embeddings
+pip install -e ".[memory]"            # ChromaDB backend (SQLite fallback otherwise)
+```
+
+Drop reference files under `~/Library/Application Support/KMacAgentFriend/knowledge/<domain>/` and run ingestion (`POST /api/knowledge/ingest`). Memories and conversations can be exported/imported as a portable "reincarnation" bundle.
+
+### Run without Ollama (UI dev)
+
+Set `MOCK_MODE=true` in `.env` to serve canned replies so the Swift UI works end-to-end without a local model.
 
 ### Dev script
 
@@ -77,6 +90,10 @@ Hold **Right Option** or use **Hold to Talk** in the menu bar. Audio is transcri
 | `[WISHLIST.md](WISHLIST.md)`                                                 | Cursor-only improvement backlog     |
 | `[specs/00-overview.md](specs/00-overview.md)`                               | Product and technical overview      |
 | `[specs/technical/TR-ipc-websocket.md](specs/technical/TR-ipc-websocket.md)` | IPC contract (Phase 0)              |
+
+New specs cover long-term memory, knowledge ingestion, reincarnation, missions/autopilot, performance, MCP supervisor, security, mock mode, and macOS integration — see `specs/technical/`.
+
+Generate a new spec from the template: `make spec KIND=technical SLUG=my-feature TITLE="My feature"`.
 
 
 ## License

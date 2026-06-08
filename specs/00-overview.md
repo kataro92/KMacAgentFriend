@@ -48,9 +48,17 @@ KMacAgentFriend/
 ## Spec index
 
 - [`technical/TR-ipc-websocket.md`](technical/TR-ipc-websocket.md) — Phase 0 IPC
-- [`technical/TR-voice-loop.md`](technical/TR-voice-loop.md) — Phase 1 voice
+- [`technical/TR-voice-loop.md`](technical/TR-voice-loop.md) — Phase 1 voice (incl. wake word + barge-in)
 - [`technical/TR-tools-sandbox.md`](technical/TR-tools-sandbox.md) — Phase 2 sandboxed file tools
 - [`technical/TR-memory.md`](technical/TR-memory.md) — Phase 3 conversation history
+- [`technical/TR-memory-longterm.md`](technical/TR-memory-longterm.md) — Phase 3 long-term semantic memory
+- [`technical/TR-knowledge.md`](technical/TR-knowledge.md) — Phase 3 knowledge ingestion
+- [`technical/TR-reincarnation.md`](technical/TR-reincarnation.md) — soul export/import
 - [`technical/TR-vision.md`](technical/TR-vision.md) — Phase 4 camera + VLM
+- [`technical/TR-missions-autopilot.md`](technical/TR-missions-autopilot.md) — Phase 5 missions, autopilot, audit
+- [`technical/TR-performance.md`](technical/TR-performance.md) — model pinning + inference queue
+- [`technical/TR-mcp.md`](technical/TR-mcp.md) — pooled MCP supervisor
+- [`technical/TR-security.md`](technical/TR-security.md) — sandbox audit + rate limiting
+- [`technical/TR-mock-mode.md`](technical/TR-mock-mode.md) — mock daemon mode
+- [`technical/TR-macos-integration.md`](technical/TR-macos-integration.md) — login item, Keychain, Shortcuts, Calendar
 - [`technical/TR-dashboard.md`](technical/TR-dashboard.md) — Phase 6 dashboard
-- [`technical/TR-memory.md`](technical/TR-memory.md) — Phase 3 conversation history
