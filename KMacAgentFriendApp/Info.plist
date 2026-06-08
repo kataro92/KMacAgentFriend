@@ -26,5 +26,7 @@
 	<string>KMacAgentFriend needs the microphone for voice commands.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>KMacAgentFriend uses the camera only when you confirm a vision request.</string>
+	<key>KAFProjectRoot</key>
+	<string>$(KAF_PROJECT_ROOT)</string>
 </dict>
 </plist>

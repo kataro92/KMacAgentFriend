@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from kmac_agent_friend.settings_store import load_user_overrides
+from kmac_agent_friend.voice.stt import normalize_whisper_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = Path.home() / "Library" / "Application Support" / "KMacAgentFriend"
@@ -15,7 +19,11 @@ DEFAULT_SANDBOX_DIR = DEFAULT_DATA_DIR / "sandbox"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(PROJECT_ROOT / ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     kaf_host: str = "127.0.0.1"
     kaf_port: int = 18750
@@ -26,9 +34,11 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2"
     ollama_vlm_model: str = "llava"
     moltbook_url: str = ""
-    whisper_model: str = "mlx-community/whisper-large-v3-turbo"
+    whisper_model: str = "mlx-community/whisper-small-mlx"
+    tts_language: str = "en"
     kaf_project_dirs: str = ""
     background_interval_seconds: float = 120.0
+    hf_token: str = Field(default="", validation_alias="HF_TOKEN")
 
     @field_validator("kaf_data_dir", mode="before")
     @classmethod
@@ -57,7 +67,26 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    overrides = load_user_overrides(settings.kaf_data_dir)
+    if overrides:
+        settings = settings.model_copy(update=overrides)
+    normalized_whisper = normalize_whisper_model(settings.whisper_model)
+    if normalized_whisper != settings.whisper_model:
+        settings = settings.model_copy(update={"whisper_model": normalized_whisper})
+    _apply_runtime_env(settings)
+    return settings
+
+
+def _apply_runtime_env(settings: Settings) -> None:
+    if settings.hf_token:
+        os.environ["HF_TOKEN"] = settings.hf_token
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = settings.hf_token
+
+
+def reload_settings() -> Settings:
+    get_settings.cache_clear()
+    return get_settings()
 
 
 def ensure_data_dirs(settings: Settings | None = None) -> None:

@@ -31,6 +31,7 @@ async def test_health_ok(token):
     data = response.json()
     assert data["ok"] is True
     assert data["service"] == "kmac-agent-friend"
+    assert data["api_version"] == 4
     assert data["ollama"] is False
     assert data["agent"]["status"] == "idle"
 

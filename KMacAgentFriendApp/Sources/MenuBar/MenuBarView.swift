@@ -3,6 +3,7 @@ import SwiftUI
 struct MenuBarView: View {
     @EnvironmentObject private var connection: DaemonConnection
     @EnvironmentObject private var voice: VoiceSession
+    @EnvironmentObject private var daemonProcess: DaemonProcessManager
     @Environment(\.openWindow) private var openWindow
     @State private var showCameraConfirm = false
     @State private var visionStatus: String?
@@ -10,17 +11,28 @@ struct MenuBarView: View {
     private let daemon = DaemonClient()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: CyberTheme.spacing * 1.5) {
             header
-            statusSection
-            voiceSection
-            actions
-            Divider()
+            CyberCard(title: "LINK STATUS", variant: .holographic) {
+                statusSection
+            }
+            CyberCard(title: "VOICE UPLINK", variant: .terminal) {
+                voiceSection
+            }
+            CyberCard(title: "ACTIONS") {
+                actions
+            }
+            CyberDivider()
             footer
         }
-        .padding()
-        .frame(width: 300)
-        .onAppear { connection.connect() }
+        .padding(16)
+        .frame(width: CyberTheme.panelWidth)
+        .cyberScreen()
+        .task {
+            if connection.status == .disconnected {
+                connection.connect()
+            }
+        }
         .sheet(item: Binding(
             get: { connection.pendingConfirmation },
             set: { connection.pendingConfirmation = $0 }
@@ -34,106 +46,99 @@ struct MenuBarView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: "cpu")
                 .font(.title2)
-            VStack(alignment: .leading) {
-                Text("KMacAgentFriend")
-                    .font(.headline)
-                Text("Phase 2 — tools & safety")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .foregroundStyle(CyberTheme.accent)
+                .neonGlow(radius: 6)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("KMACAGENT")
+                    .font(CyberFont.heading(18))
+                    .tracking(3)
+                    .foregroundStyle(CyberTheme.foreground)
+                    .cyberGlitchText()
+                HStack(spacing: 4) {
+                    Text("NODE ONLINE")
+                        .font(CyberFont.label)
+                        .foregroundStyle(CyberTheme.mutedForeground)
+                    BlinkingCursor()
+                }
             }
         }
     }
 
     private var statusSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Label(connection.status.rawValue.capitalized, systemImage: "circle.fill")
-                .foregroundStyle(statusColor)
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Agent:")
-                Text(connection.agentStatus)
-                    .fontWeight(.medium)
+                CyberBadge(text: connection.status.rawValue, color: statusColor)
+                Spacer()
+                CyberBadge(
+                    text: connection.ollamaReachable ? "OLLAMA OK" : "OLLAMA DOWN",
+                    color: connection.ollamaReachable ? CyberTheme.accent : CyberTheme.destructive
+                )
             }
-            .font(.caption)
+            CyberStatusRow(label: "Agent", value: connection.agentStatus, color: CyberTheme.statusColor(for: connection.agentStatus))
             if connection.agentStatus == "background", !connection.backgroundTask.isEmpty {
-                Text("Task: \(connection.backgroundTask)")
-                    .font(.caption2)
-                    .foregroundStyle(.purple)
+                CyberStatusRow(label: "Task", value: connection.backgroundTask, color: CyberTheme.accentSecondary)
             }
-            HStack {
-                Text("Ollama:")
-                Text(connection.ollamaReachable ? "online" : "offline")
-                    .foregroundStyle(connection.ollamaReachable ? .green : .orange)
-            }
-            .font(.caption)
             if let ms = connection.lastLatencyMs {
-                Text(String(format: "WS latency: %.1f ms", ms))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                CyberStatusRow(label: "Latency", value: String(format: "%.1f ms", ms), color: CyberTheme.accentTertiary)
             }
-            if let err = connection.errorMessage {
-                Text(err)
-                    .font(.caption2)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+            if let err = daemonProcess.lastError ?? connection.errorMessage {
+                CyberPromptLine(prefix: "!", text: err)
+                    .foregroundStyle(CyberTheme.destructive)
             }
         }
     }
 
     private var voiceSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HoldToTalkButton()
-            Text("Hotkey: hold Right ⌥ Option")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                HoldToTalkButton()
+                ReplayLastButton()
+            }
+            Text("HOTKEY: HOLD RIGHT ⌥ OPTION")
+                .font(CyberFont.label)
+                .foregroundStyle(CyberTheme.mutedForeground)
+                .tracking(1)
             if let msg = voice.statusMessage {
-                Text(msg)
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
+                CyberPromptLine(prefix: ">", text: msg)
+            }
+            if let progress = connection.voiceProgressMessage {
+                CyberPromptLine(prefix: "…", text: progress, muted: true)
             }
             if let transcript = connection.lastTranscript {
-                Text("You: \(transcript)")
-                    .font(.caption)
-                    .fixedSize(horizontal: false, vertical: true)
+                CyberPromptLine(prefix: "YOU>", text: transcript)
             }
             if let reply = connection.lastReply {
-                Text("Agent: \(reply)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CyberPromptLine(prefix: "AGENT>", text: reply, muted: true)
             }
         }
     }
 
     private var statusColor: Color {
         switch connection.status {
-        case .connected: return .green
-        case .connecting: return .yellow
-        case .error: return .red
-        case .disconnected: return .gray
+        case .connected: return CyberTheme.accent
+        case .connecting: return CyberTheme.accentTertiary
+        case .error: return CyberTheme.destructive
+        case .disconnected: return CyberTheme.mutedForeground
         }
     }
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Button("Capture Vision…") { showCameraConfirm = true }
+            Button("Capture Vision") { showCameraConfirm = true }
+                .buttonStyle(CyberButtonStyle(variant: .outline, fullWidth: true))
             if let visionStatus {
-                Text(visionStatus)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                CyberPromptLine(prefix: ">", text: visionStatus, muted: true)
             }
             Button("Inject Test Text") {
                 _ = AXTextInjector.inject("Hello from KMacAgentFriend")
             }
+            .buttonStyle(CyberButtonStyle(variant: .ghost, fullWidth: true))
             .disabled(!AXTextInjector.isTrusted)
             Button("Reconnect") { connection.reconnect() }
-            Button("Open Full Panel…") {
-                openWindow(id: "dashboard")
-            }
+                .buttonStyle(CyberButtonStyle(variant: .secondary, fullWidth: true))
         }
         .confirmationDialog(
             "Use the camera for vision analysis?",
@@ -167,13 +172,32 @@ struct MenuBarView: View {
     }
 
     private var footer: some View {
-        HStack {
-            Button("Settings…") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        HStack(spacing: 8) {
+            Button("Control Panel") {
+                openWindow(id: "control-panel")
             }
+            .buttonStyle(CyberButtonStyle(variant: .default))
             Spacer()
             Button("Quit") { NSApplication.shared.terminate(nil) }
+                .buttonStyle(CyberButtonStyle(variant: .destructive))
         }
+    }
+}
+
+private struct ReplayLastButton: View {
+    @EnvironmentObject private var voice: VoiceSession
+
+    var body: some View {
+        Button {
+            Task { await voice.replayLastReply() }
+        } label: {
+            Image(systemName: voice.isReplaying ? "speaker.wave.3.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 36, height: 36)
+        }
+        .buttonStyle(CyberButtonStyle(variant: .outline))
+        .disabled(!voice.canReplayLastReply)
+        .help("Replay last response")
     }
 }
 
@@ -184,10 +208,10 @@ private struct HoldToTalkButton: View {
         Button {
             // Tap toggles for accessibility without hotkey
         } label: {
-            Text(voice.isRecording ? "Release to send" : "Hold to Talk")
-                .frame(maxWidth: .infinity)
+            Text(voice.isRecording ? "RELEASE TO SEND" : "HOLD TO TALK")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(CyberButtonStyle(variant: voice.isRecording ? .glitch : .default, fullWidth: true))
+        .frame(maxWidth: .infinity)
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in

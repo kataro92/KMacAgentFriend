@@ -16,6 +16,7 @@ targets:
       - path: Sources
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: com.kataro92.KMacAgentFriend
+      KAF_PROJECT_ROOT: $(SRCROOT)/..
       INFOPLIST_FILE: Info.plist
       CODE_SIGN_ENTITLEMENTS: KMacAgentFriend.entitlements
       ENABLE_HARDENED_RUNTIME: YES

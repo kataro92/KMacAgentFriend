@@ -48,7 +48,11 @@ xcodegen generate   # if using XcodeGen
 open KMacAgentFriend.xcodeproj
 ```
 
-Build and run in Xcode. The menu bar icon shows daemon connection status.
+Build and run in Xcode. The app **starts the Python daemon automatically** on launch and stops it when you quit. The menu bar icon shows connection status.
+
+If the repo lives on an external drive, macOS may ask you to **choose the project folder once** (Settings → Choose project folder…) so the app can run `.venv`.
+
+For a one-off daemon in Terminal (optional): `make dev`
 
 ### 4. Voice (optional)
 

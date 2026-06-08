@@ -15,22 +15,39 @@ enum CameraCaptureError: LocalizedError {
     }
 }
 
+private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
+    private let onFinish: (Result<Data, Error>) -> Void
+
+    init(onFinish: @escaping (Result<Data, Error>) -> Void) {
+        self.onFinish = onFinish
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        if let error {
+            onFinish(.failure(error))
+            return
+        }
+        guard let data = photo.fileDataRepresentation() else {
+            onFinish(.failure(CameraCaptureError.noImage))
+            return
+        }
+        onFinish(.success(data))
+    }
+}
+
 /// Single-frame JPEG capture for on-demand vision (Phase 4).
 @MainActor
-final class CameraCapture: NSObject, AVCapturePhotoCaptureDelegate {
+final class CameraCapture {
     private let session = AVCaptureSession()
     private let output = AVCapturePhotoOutput()
-    private var continuation: CheckedContinuation<Data, Error>?
+    private var photoDelegate: PhotoCaptureDelegate?
 
     func requestPermission() async -> Bool {
-        switch AVCaptureDevice.authorizationStatus(for: .video) {
-        case .authorized:
-            return true
-        case .notDetermined:
-            return await AVCaptureDevice.requestAccess(for: .video)
-        default:
-            return false
-        }
+        await PermissionsManager.requestCamera()
     }
 
     func captureJPEG() async throws -> Data {
@@ -55,29 +72,16 @@ final class CameraCapture: NSObject, AVCapturePhotoCaptureDelegate {
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
+            let delegate = PhotoCaptureDelegate { [weak self] result in
+                Task { @MainActor in
+                    self?.session.stopRunning()
+                    self?.photoDelegate = nil
+                }
+                continuation.resume(with: result)
+            }
+            photoDelegate = delegate
             let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
-            output.capturePhoto(with: settings, delegate: self)
+            output.capturePhoto(with: settings, delegate: delegate)
         }
-    }
-
-    func photoOutput(
-        _ output: AVCapturePhotoOutput,
-        didFinishProcessingPhoto photo: AVCapturePhoto,
-        error: Error?
-    ) {
-        if let error {
-            continuation?.resume(throwing: error)
-            continuation = nil
-            return
-        }
-        guard let data = photo.fileDataRepresentation() else {
-            continuation?.resume(throwing: CameraCaptureError.noImage)
-            continuation = nil
-            return
-        }
-        continuation?.resume(returning: data)
-        continuation = nil
-        session.stopRunning()
     }
 }

@@ -21,18 +21,7 @@ final class AudioRecorder {
     private var outputURL: URL?
 
     func requestPermission() async -> Bool {
-        await withCheckedContinuation { continuation in
-            switch AVCaptureDevice.authorizationStatus(for: .audio) {
-            case .authorized:
-                continuation.resume(returning: true)
-            case .notDetermined:
-                AVCaptureDevice.requestAccess(for: .audio) { granted in
-                    continuation.resume(returning: granted)
-                }
-            default:
-                continuation.resume(returning: false)
-            }
-        }
+        await PermissionsManager.requestMicrophone()
     }
 
     func start() throws {

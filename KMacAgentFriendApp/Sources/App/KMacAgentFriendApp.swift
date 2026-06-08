@@ -2,14 +2,15 @@ import SwiftUI
 
 @main
 struct KMacAgentFriendApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var connection = DaemonConnection()
     @StateObject private var voice = VoiceSession()
-
     var body: some Scene {
         MenuBarExtra("KMacAgentFriend", systemImage: connection.menuBarSymbol) {
             MenuBarView()
                 .environmentObject(connection)
                 .environmentObject(voice)
+                .environmentObject(DaemonProcessManager.shared)
                 .onAppear {
                     voice.bind(connection)
                     voice.start()
@@ -17,16 +18,12 @@ struct KMacAgentFriendApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("KMacAgentFriend Dashboard", id: "dashboard") {
-            DashboardView()
+        Window("KMacAgentFriend", id: "control-panel") {
+            ControlPanelView()
                 .environmentObject(connection)
-                .environmentObject(voice)
+                .environmentObject(DaemonProcessManager.shared)
+                .preferredColorScheme(.dark)
         }
-        .defaultSize(width: 720, height: 520)
-
-        Settings {
-            SettingsView()
-                .environmentObject(connection)
-        }
+        .defaultSize(width: 760, height: 580)
     }
 }

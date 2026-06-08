@@ -33,6 +33,105 @@ def _silent_wav(duration_s: float = 0.2) -> bytes:
 
 
 @pytest.mark.asyncio
+async def test_voice_status(token):
+    headers = {"Authorization": f"Bearer {token}"}
+    with patch("kmac_agent_friend.main.mlx_whisper_available", return_value=True):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/api/voice/status", headers=headers)
+    data = response.json()
+    assert data["ok"] is True
+    assert data["mlx_whisper"] is True
+    assert data["saved_model"] == get_settings().whisper_model
+    assert data["fast_model"] == "mlx-community/whisper-small-mlx"
+    assert data["download_in_progress"] is False
+
+
+@pytest.mark.asyncio
+async def test_voice_status_for_model(token):
+    headers = {"Authorization": f"Bearer {token}"}
+    with (
+        patch("kmac_agent_friend.main.mlx_whisper_available", return_value=True),
+        patch("kmac_agent_friend.main.whisper_availability", return_value={
+            "model": "mlx-community/whisper-tiny",
+            "cached": False,
+            "ready": False,
+            "needs_download": True,
+        }),
+        patch("kmac_agent_friend.main._voice_download_active", return_value=False),
+        patch("kmac_agent_friend.main.model_status", return_value={
+            "fast_model": "mlx-community/whisper-small-mlx",
+        }),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/voice/status",
+                headers=headers,
+                params={"model": "mlx-community/whisper-tiny"},
+            )
+    data = response.json()
+    assert data["model"] == "mlx-community/whisper-tiny"
+    assert data["needs_download"] is True
+    assert data["download_in_progress"] is False
+
+
+@pytest.mark.asyncio
+async def test_voice_status_ignores_stale_incomplete_on_other_model(token, tmp_path, monkeypatch):
+    """Stale .incomplete blobs for the saved model must not mark another model as downloading."""
+    headers = {"Authorization": f"Bearer {token}"}
+    from kmac_agent_friend.voice.stt import whisper_availability
+
+    blobs = tmp_path / "blobs"
+    blobs.mkdir(parents=True)
+    (blobs / "weights.incomplete").write_bytes(b"partial")
+
+    with (
+        patch("kmac_agent_friend.main.mlx_whisper_available", return_value=True),
+        patch("kmac_agent_friend.main.whisper_availability", side_effect=whisper_availability),
+        patch("kmac_agent_friend.main._voice_download_active", return_value=False),
+        patch(
+            "kmac_agent_friend.main.model_status",
+            return_value={"fast_model": "mlx-community/whisper-small-mlx"},
+        ),
+        patch("kmac_agent_friend.voice.stt._hf_model_cache_path", return_value=tmp_path),
+        patch("kmac_agent_friend.voice.stt.is_model_cached", return_value=True),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get(
+                "/api/voice/status",
+                headers=headers,
+                params={"model": "mlx-community/whisper-tiny"},
+            )
+    data = response.json()
+    assert data["download_in_progress"] is False
+    assert data["cached"] is True
+
+
+@pytest.mark.asyncio
+async def test_voice_download_starts(token):
+    headers = {"Authorization": f"Bearer {token}"}
+    with (
+        patch("kmac_agent_friend.main.mlx_whisper_available", return_value=True),
+        patch("kmac_agent_friend.main.whisper_availability", return_value={
+            "model": "mlx-community/whisper-tiny",
+            "cached": False,
+            "ready": False,
+            "needs_download": True,
+        }),
+        patch("kmac_agent_friend.main._voice_download_active", return_value=False),
+        patch("kmac_agent_friend.main._download_whisper_model", AsyncMock()),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/voice/download",
+                headers=headers,
+                json={"model": "mlx-community/whisper-tiny"},
+            )
+    data = response.json()
+    assert data["ok"] is True
+    assert data["state"] == "started"
+
+
+@pytest.mark.asyncio
 async def test_voice_speak_ok(token):
     headers = {"Authorization": f"Bearer {token}"}
     with patch(
@@ -53,8 +152,14 @@ async def test_voice_speak_ok(token):
 async def test_voice_transcribe_missing_stt(token):
     headers = {"Authorization": f"Bearer {token}"}
     with patch(
-        "kmac_agent_friend.main.transcribe_wav",
-        AsyncMock(return_value=TranscribeResult(ok=False, error="mlx-whisper not installed")),
+        "kmac_agent_friend.main.transcribe_for_turn",
+        AsyncMock(
+            return_value=(
+                TranscribeResult(ok=False, error="mlx-whisper not installed"),
+                "mlx-community/whisper-small-mlx",
+                None,
+            )
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -90,8 +195,14 @@ async def test_voice_turn_happy_path(token):
     headers = {"Authorization": f"Bearer {token}"}
     with (
         patch(
-            "kmac_agent_friend.main.transcribe_wav",
-            AsyncMock(return_value=TranscribeResult(ok=True, text="hi", language="en")),
+            "kmac_agent_friend.main.transcribe_for_turn",
+            AsyncMock(
+                return_value=(
+                    TranscribeResult(ok=True, text="hi", language="en"),
+                    "mlx-community/whisper-small-mlx",
+                    None,
+                )
+            ),
         ),
         patch(
             "kmac_agent_friend.main.chat_reply",

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 from kmac_agent_friend.config import get_settings
-from kmac_agent_friend.forum.moltbook import ForumFeed, ForumPost, MoltbookClient as ForumClient
+from kmac_agent_friend.forum.moltbook import ForumFeed, ForumPost
 from kmac_agent_friend.forum.sanitizer import sanitize_forum_text
 from kmac_agent_friend.main import app
 

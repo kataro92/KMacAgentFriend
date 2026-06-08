@@ -28,6 +28,10 @@ voice = ["mlx-whisper>=0.4.0"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:'asyncio.get_event_loop_policy' is deprecated:DeprecationWarning",
+    "ignore:'asyncio.set_event_loop_policy' is deprecated:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

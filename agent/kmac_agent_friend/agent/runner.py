@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from kmac_agent_friend.config import Settings
-from kmac_agent_friend.memory.history import ConversationStore, DEFAULT_CONVERSATION_ID
+from kmac_agent_friend.memory.history import DEFAULT_CONVERSATION_ID, ConversationStore
 from kmac_agent_friend.tools import list_dir, read_file, run_shell
 from kmac_agent_friend.voice.chat import ChatResult
 
@@ -50,7 +50,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_shell",
-            "description": "Run a shell command in an allowed directory. Destructive commands need confirm.",
+            "description": (
+                "Run a shell command in an allowed directory. "
+                "Destructive commands need confirm."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

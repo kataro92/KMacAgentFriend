@@ -7,6 +7,12 @@ import Foundation
 enum AXTextInjector {
     static var isTrusted: Bool { AXIsProcessTrusted() }
 
+    static func openSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     static func inject(_ text: String) -> Bool {
         guard isTrusted, !text.isEmpty else { return false }
 

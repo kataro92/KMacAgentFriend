@@ -17,13 +17,35 @@ final class DaemonConnection: ObservableObject {
     @Published var errorMessage: String?
     @Published var lastTranscript: String?
     @Published var lastReply: String?
+    @Published var lastReplyLanguage: String?
     @Published var backgroundTask: String = ""
+    @Published var currentAction: String = ""
+    @Published var voiceProgressMessage: String?
     @Published var pendingConfirmation: ConfirmationRequest?
 
     private let client = DaemonClient()
     private var webSocketTask: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
+    private var bootstrapObserver: NSObjectProtocol?
+
+    init() {
+        bootstrapObserver = NotificationCenter.default.addObserver(
+            forName: .kafDaemonBootstrapComplete,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.connect()
+            }
+        }
+    }
+
+    deinit {
+        if let bootstrapObserver {
+            NotificationCenter.default.removeObserver(bootstrapObserver)
+        }
+    }
 
     var menuBarSymbol: String {
         switch agentStatus {
@@ -48,6 +70,7 @@ final class DaemonConnection: ObservableObject {
         guard status != .connecting && status != .connected else { return }
         status = .connecting
         errorMessage = nil
+        ActivityLogStore.shared.log(level: "info", category: "ws", message: "Connecting to daemon…")
 
         Task {
             do {
@@ -57,9 +80,22 @@ final class DaemonConnection: ObservableObject {
                 try await openWebSocket()
                 status = .connected
                 startPingLoop()
+                ActivityLogStore.shared.log(
+                    level: "info",
+                    category: "ws",
+                    message: "Connected to daemon",
+                    detail: "Ollama: \(health.ollama ? "online" : "offline"), agent: \(health.agentStatus)"
+                )
+                await ActivityLogStore.shared.loadHistory()
             } catch {
                 status = .error
                 errorMessage = error.localizedDescription
+                ActivityLogStore.shared.log(
+                    level: "error",
+                    category: "ws",
+                    message: "Connection failed",
+                    detail: error.localizedDescription
+                )
             }
         }
     }
@@ -70,6 +106,7 @@ final class DaemonConnection: ObservableObject {
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         status = .disconnected
+        ActivityLogStore.shared.log(level: "info", category: "ws", message: "Disconnected from daemon")
     }
 
     func reconnect() {
@@ -83,6 +120,10 @@ final class DaemonConnection: ObservableObject {
 
     func submitVoiceTurn(fileURL: URL) async throws -> VoiceTurnResponse {
         try await client.submitVoiceTurn(fileURL: fileURL)
+    }
+
+    func speakText(_ text: String, language: String = "en") async throws -> SpeakResponse {
+        try await client.speakText(text, language: language)
     }
 
     func sendConfirmResponse(requestId: String, approved: Bool) async throws {
@@ -153,27 +194,65 @@ final class DaemonConnection: ObservableObject {
               let type = json["type"] as? String else { return }
 
         switch type {
+        case "activity":
+            ActivityLogStore.shared.append(ActivityEntry(daemonPayload: json))
         case "state":
             if let s = json["status"] as? String {
                 agentStatus = s
             }
+            if let action = json["current_action"] as? String {
+                currentAction = action
+            }
             if let task = json["background_task"] as? String {
                 backgroundTask = task
             }
+        case "voice_progress":
+            if let message = json["message"] as? String {
+                voiceProgressMessage = message
+            }
+            let step = json["step"] as? String ?? "voice"
+            var detail: String?
+            if let percent = json["percent"] {
+                detail = "progress \(percent)%"
+            }
+            ActivityLogStore.shared.log(
+                level: "info",
+                category: "voice",
+                message: json["message"] as? String ?? step,
+                detail: detail
+            )
         case "transcript":
             if let t = json["text"] as? String {
                 lastTranscript = t
             }
+            ActivityLogStore.shared.log(
+                level: "info",
+                category: "ws",
+                message: "← transcript",
+                detail: json["text"] as? String
+            )
         case "reply":
             if let t = json["text"] as? String {
                 lastReply = t
             }
+            ActivityLogStore.shared.log(
+                level: "info",
+                category: "ws",
+                message: "← reply",
+                detail: json["text"] as? String
+            )
         case "pong":
             if let ms = json["latency_ms"] as? Double {
                 lastLatencyMs = ms
             }
         case "error":
             errorMessage = json["message"] as? String
+            ActivityLogStore.shared.log(
+                level: "error",
+                category: "ws",
+                message: "← error",
+                detail: json["message"] as? String
+            )
         case "confirm_request":
             let requestId = json["request_id"] as? String ?? UUID().uuidString
             let action = json["action"] as? String ?? "action"
@@ -184,6 +263,12 @@ final class DaemonConnection: ObservableObject {
                 action: action,
                 message: message,
                 detail: detail
+            )
+            ActivityLogStore.shared.log(
+                level: "warn",
+                category: "confirm",
+                message: "Confirmation requested: \(action)",
+                detail: message
             )
         case "inject_text":
             if let text = json["text"] as? String {
@@ -216,6 +301,14 @@ final class DaemonConnection: ObservableObject {
         guard let task = webSocketTask else { return }
         let data = try JSONSerialization.data(withJSONObject: object)
         guard let text = String(data: data, encoding: .utf8) else { return }
+        if let msgType = object["type"] as? String, msgType != "ping" {
+            ActivityLogStore.shared.log(
+                level: "debug",
+                category: "ws",
+                message: "→ \(msgType)",
+                detail: text
+            )
+        }
         try await task.send(.string(text))
     }
 }

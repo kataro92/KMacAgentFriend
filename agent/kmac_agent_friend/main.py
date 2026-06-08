@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -10,24 +12,51 @@ from typing import Any
 
 import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, File, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from kmac_agent_friend.auth import verify_token
-from kmac_agent_friend.config import ensure_data_dirs, get_settings, resolve_api_token
+from kmac_agent_friend.activity_log import MAX_ENTRIES, activity_log
 from kmac_agent_friend.agent import chat_with_tools
+from kmac_agent_friend.auth import verify_token
 from kmac_agent_friend.background import background_worker
+from kmac_agent_friend.config import (
+    ensure_data_dirs,
+    get_settings,
+    reload_settings,
+    resolve_api_token,
+)
 from kmac_agent_friend.confirm import confirmation_manager
 from kmac_agent_friend.forum import MoltbookClient as ForumClient
 from kmac_agent_friend.memory import ConversationStore
+from kmac_agent_friend.settings_store import (
+    EDITABLE_FIELDS,
+    UserSettingsPatch,
+    migrate_stored_settings,
+    patch_user_settings,
+    user_settings_path,
+)
 from kmac_agent_friend.state import AgentStatus, agent_state
 from kmac_agent_friend.tools import list_dir, read_file, run_shell, write_file
 from kmac_agent_friend.vision import analyze_image
-from kmac_agent_friend.voice import chat_reply, speak_text, transcribe_wav
+from kmac_agent_friend.voice import (
+    chat_reply,
+    model_status,
+    resolve_whisper_model,
+    speak_text,
+    transcribe_for_turn,
+    warm_whisper_model,
+)
+from kmac_agent_friend.voice.stt import (
+    mlx_whisper_available,
+    normalize_whisper_model,
+    whisper_availability,
+)
 from kmac_agent_friend.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
+
+_voice_download_tasks: dict[str, asyncio.Task[None]] = {}
 
 
 async def _ollama_reachable(host: str) -> bool:
@@ -39,6 +68,19 @@ async def _ollama_reachable(host: str) -> bool:
         return False
 
 
+async def _record_activity(
+    level: str,
+    category: str,
+    message: str,
+    detail: dict[str, Any] | None = None,
+    *,
+    broadcast: bool = True,
+) -> None:
+    entry = activity_log.append(level, category, message, detail)
+    if broadcast:
+        await ws_manager.broadcast({"type": "activity", **entry.to_dict()})
+
+
 async def _set_status(
     status: AgentStatus,
     *,
@@ -47,6 +89,10 @@ async def _set_status(
 ) -> None:
     agent_state.status = status
     agent_state.current_action = action
+    detail: dict[str, Any] = {"status": status.value}
+    if action:
+        detail["action"] = action
+    await _record_activity("info", "agent", f"Agent status: {status.value}", detail)
     if broadcast:
         await ws_manager.broadcast(_state_event())
 
@@ -55,15 +101,71 @@ def _state_event() -> dict[str, Any]:
     return {"type": "state", **agent_state.to_dict()}
 
 
+async def _broadcast_voice_progress(
+    step: str,
+    message: str,
+    percent: int | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "type": "voice_progress",
+        "step": step,
+        "message": message,
+    }
+    if percent is not None:
+        payload["percent"] = percent
+    await ws_manager.broadcast(payload)
+    detail: dict[str, Any] = {"step": step}
+    if percent is not None:
+        detail["percent"] = percent
+    await _record_activity("info", "voice", message, detail)
+
+
+async def _warm_voice_stt() -> None:
+    settings = get_settings()
+    if not mlx_whisper_available():
+        await _record_activity("info", "voice", "mlx-whisper not installed", broadcast=True)
+        return
+    configured = settings.whisper_model
+    model, fallback_note = resolve_whisper_model(configured)
+    if fallback_note:
+        await _record_activity("warn", "voice", fallback_note, {"configured": configured})
+        await _broadcast_voice_progress("fallback", fallback_note)
+    await _broadcast_voice_progress("warmup", f"Warming Whisper ({model})")
+    result = await warm_whisper_model(model)
+    if result.ok:
+        await _record_activity("info", "voice", "Whisper model ready", {"model": model})
+        await _broadcast_voice_progress("warmup", f"Whisper ready ({model})", 100)
+    else:
+        await _record_activity(
+            "error",
+            "voice",
+            "Whisper model failed to load",
+            {"model": model, "error": result.error},
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _configure_logging()
+    bootstrap = get_settings()
+    if migrate_stored_settings(bootstrap.kaf_data_dir):
+        reload_settings()
     settings = get_settings()
     ensure_data_dirs(settings)
     token = resolve_api_token(settings)
     logger.info("KMacAgentFriend daemon starting on %s", settings.bind_url)
+    logger.info("Whisper model: %s", settings.whisper_model)
+    if settings.hf_token:
+        logger.info("Hugging Face token loaded from .env")
+    else:
+        logger.warning("No HF_TOKEN — public model downloads may be rate-limited")
     if not settings.kaf_api_token:
         logger.info("API token (save to .env as KAF_API_TOKEN): %s", token)
+    warmup_task = asyncio.create_task(_warm_voice_stt())
     yield
+    warmup_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await warmup_task
     await background_worker.stop()
     logger.info("KMacAgentFriend daemon stopped")
 
@@ -79,6 +181,24 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def log_http_activity(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if (
+        request.method in {"POST", "PATCH", "PUT", "DELETE"}
+        and path.startswith("/api/")
+        and not path.startswith("/api/activity")
+    ):
+        await _record_activity(
+            "debug",
+            "http",
+            f"{request.method} {path}",
+            {"status_code": response.status_code},
+        )
+    return response
+
+
 @app.get("/health")
 async def health(_: str = Depends(verify_token)):
     settings = get_settings()
@@ -87,11 +207,78 @@ async def health(_: str = Depends(verify_token)):
         "ok": True,
         "service": "kmac-agent-friend",
         "version": "0.1.0",
+        "api_version": 4,
         "ollama": ollama_ok,
         "ollama_host": settings.ollama_host,
         "model": settings.ollama_model,
         "agent": agent_state.to_dict(),
     }
+
+
+def _public_settings() -> dict[str, Any]:
+    settings = get_settings()
+    return {field: getattr(settings, field) for field in EDITABLE_FIELDS}
+
+
+@app.get("/api/settings")
+async def get_app_settings(_: str = Depends(verify_token)):
+    settings = get_settings()
+    return {
+        "ok": True,
+        "settings": _public_settings(),
+        "paths": {
+            "user_settings": str(user_settings_path(settings.kaf_data_dir)),
+            "data_dir": str(settings.kaf_data_dir),
+        },
+        "daemon": {"host": settings.kaf_host, "port": settings.kaf_port},
+    }
+
+
+@app.patch("/api/settings")
+async def update_app_settings(body: UserSettingsPatch, _: str = Depends(verify_token)):
+    settings = get_settings()
+    patch_user_settings(settings.kaf_data_dir, body)
+    reload_settings()
+    return {"ok": True, "settings": _public_settings()}
+
+
+@app.get("/api/activity")
+async def get_activity(limit: int = 200, _: str = Depends(verify_token)):
+    return {"ok": True, "entries": activity_log.recent(limit=min(limit, MAX_ENTRIES))}
+
+
+@app.post("/api/activity/clear")
+async def clear_activity(_: str = Depends(verify_token)):
+    activity_log.clear()
+    await _record_activity("info", "system", "Activity log cleared", broadcast=True)
+    return {"ok": True}
+
+
+@app.get("/api/ollama/models")
+async def list_ollama_models(_: str = Depends(verify_token)):
+    settings = get_settings()
+    host = settings.ollama_host.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{host}/api/tags")
+        if response.status_code != 200:
+            return {
+                "ok": False,
+                "reachable": False,
+                "models": [],
+                "error": f"HTTP {response.status_code}",
+            }
+        payload = response.json()
+        models = sorted(
+            {
+                item.get("name", "")
+                for item in payload.get("models", [])
+                if isinstance(item, dict) and item.get("name")
+            }
+        )
+        return {"ok": True, "reachable": True, "models": models}
+    except httpx.HTTPError as exc:
+        return {"ok": False, "reachable": False, "models": [], "error": str(exc)}
 
 
 @app.get("/api/state")
@@ -361,6 +548,73 @@ class SpeakRequest(BaseModel):
     language: str = "en"
 
 
+class VoiceDownloadRequest(BaseModel):
+    model: str = ""
+
+
+def _voice_download_active(model: str) -> bool:
+    key = normalize_whisper_model(model)
+    task = _voice_download_tasks.get(key)
+    return task is not None and not task.done()
+
+
+async def _download_whisper_model(model: str) -> None:
+    try:
+        await _broadcast_voice_progress("download", f"Downloading {model}", 0)
+        result = await warm_whisper_model(model)
+        if result.ok:
+            await _record_activity("info", "voice", "Whisper model downloaded", {"model": model})
+            await _broadcast_voice_progress("download", f"Download complete ({model})", 100)
+        else:
+            await _record_activity(
+                "error",
+                "voice",
+                "Whisper download failed",
+                {"model": model, "error": result.error},
+            )
+            await _broadcast_voice_progress("error", result.error or "Download failed")
+    finally:
+        _voice_download_tasks.pop(model, None)
+
+
+@app.get("/api/voice/status")
+async def voice_status(model: str | None = None, _: str = Depends(verify_token)):
+    settings = get_settings()
+    target = normalize_whisper_model(model or settings.whisper_model)
+    availability = whisper_availability(target)
+    return {
+        "ok": True,
+        "mlx_whisper": mlx_whisper_available(),
+        **availability,
+        "download_in_progress": _voice_download_active(target),
+        "fast_model": model_status(settings.whisper_model)["fast_model"],
+        "saved_model": normalize_whisper_model(settings.whisper_model),
+        # Legacy fields for older clients
+        "model": target,
+        "model_ready": availability["ready"],
+        "needs_download": availability["needs_download"],
+    }
+
+
+@app.post("/api/voice/download")
+async def voice_download(body: VoiceDownloadRequest, _: str = Depends(verify_token)):
+    if not mlx_whisper_available():
+        return {"ok": False, "error": "mlx-whisper not installed. Run: pip install -e '.[voice]'"}
+
+    settings = get_settings()
+    model = normalize_whisper_model(body.model or settings.whisper_model)
+    availability = whisper_availability(model)
+    if not availability["needs_download"] and availability["ready"]:
+        return {"ok": True, "model": model, "state": "ready"}
+    if _voice_download_active(model):
+        return {"ok": True, "model": model, "state": "downloading"}
+
+    task = asyncio.create_task(_download_whisper_model(model))
+    _voice_download_tasks[model] = task
+    await _record_activity("info", "voice", "Whisper download started", {"model": model})
+    return {"ok": True, "model": model, "state": "started"}
+
+
 @app.post("/api/voice/speak")
 async def voice_speak(body: SpeakRequest, _: str = Depends(verify_token)):
     await _set_status(AgentStatus.SPEAKING, action="speaking")
@@ -386,7 +640,11 @@ async def voice_transcribe(
     settings = get_settings()
     await _set_status(AgentStatus.THINKING, action="transcribing")
     try:
-        stt = await transcribe_wav(wav_bytes, model=settings.whisper_model)
+        stt, _, _ = await transcribe_for_turn(
+            wav_bytes,
+            settings.whisper_model,
+            on_progress=_broadcast_voice_progress,
+        )
         if not stt.ok:
             await _set_status(AgentStatus.ERROR, action=stt.error)
             return {"ok": False, "error": stt.error}
@@ -414,10 +672,21 @@ async def voice_turn(
 
     try:
         await _set_status(AgentStatus.THINKING, action="transcribing")
-        stt = await transcribe_wav(wav_bytes, model=settings.whisper_model)
+        stt, model_used, fallback_note = await transcribe_for_turn(
+            wav_bytes,
+            settings.whisper_model,
+            on_progress=_broadcast_voice_progress,
+        )
         if not stt.ok:
             await _set_status(AgentStatus.ERROR, action=stt.error)
             return {"ok": False, "error": stt.error}
+        if fallback_note:
+            await _record_activity(
+                "warn",
+                "voice",
+                fallback_note,
+                {"configured": settings.whisper_model, "used": model_used},
+            )
 
         await ws_manager.broadcast(
             {
@@ -426,11 +695,18 @@ async def voice_turn(
                 "language": stt.language,
             }
         )
+        await _record_activity(
+            "info",
+            "voice",
+            "Speech transcribed",
+            {"text": stt.text, "language": stt.language},
+        )
 
         store = ConversationStore.from_settings(settings)
         history = store.recent(limit=20)
 
         await _set_status(AgentStatus.THINKING, action="chatting")
+        await _broadcast_voice_progress("chat", f"Asking Ollama ({settings.ollama_model})")
         chat = await chat_reply(
             stt.text,
             ollama_host=settings.ollama_host,
@@ -449,12 +725,17 @@ async def voice_turn(
         store.append("user", stt.text)
         store.append("assistant", chat.reply)
         await ws_manager.broadcast({"type": "reply", "text": chat.reply})
+        await _record_activity("info", "voice", "Assistant reply", {"text": chat.reply})
 
         spoken = False
         voice = ""
         if speak and chat.reply:
             await _set_status(AgentStatus.SPEAKING, action="speaking")
-            tts = await speak_text(chat.reply, language=stt.language or "en")
+            await _broadcast_voice_progress("tts", "Speaking reply")
+            tts = await speak_text(
+                chat.reply,
+                language=stt.language or settings.tts_language or "en",
+            )
             spoken = tts.ok
             voice = tts.voice
             if not tts.ok:
@@ -496,6 +777,12 @@ async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     agent_state.connected_clients = ws_manager.count
     logger.info("WebSocket client connected (%d total)", agent_state.connected_clients)
+    await _record_activity(
+        "info",
+        "ws",
+        "WebSocket client connected",
+        {"clients": agent_state.connected_clients},
+    )
 
     try:
         await websocket.send_json(_state_event())
@@ -560,13 +847,25 @@ async def websocket_endpoint(websocket: WebSocket):
         await ws_manager.disconnect(websocket)
         agent_state.connected_clients = ws_manager.count
         logger.info("WebSocket client disconnected (%d remaining)", agent_state.connected_clients)
+        await _record_activity(
+            "info",
+            "ws",
+            "WebSocket client disconnected",
+            {"clients": agent_state.connected_clients},
+        )
 
 
-def run() -> None:
+def _configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # mlx-whisper model downloads; HF_TOKEN is optional for local use.
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
+
+def run() -> None:
+    _configure_logging()
     settings = get_settings()
     uvicorn.run(
         "kmac_agent_friend.main:app",
