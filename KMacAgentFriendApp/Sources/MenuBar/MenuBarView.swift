@@ -47,10 +47,7 @@ struct MenuBarView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "cpu")
-                .font(.title2)
-                .foregroundStyle(CyberTheme.accent)
-                .neonGlow(radius: 6)
+            AgentSprite(state: SpriteState(agentStatus: connection.agentStatus), size: 44)
             VStack(alignment: .leading, spacing: 4) {
                 Text("KMACAGENT")
                     .font(CyberFont.heading(18))
@@ -137,6 +134,20 @@ struct MenuBarView: View {
             }
             .buttonStyle(CyberButtonStyle(variant: .ghost, fullWidth: true))
             .disabled(!AXTextInjector.isTrusted)
+            HStack(spacing: 8) {
+                Button("Focus Mode") { openWindow(id: "focus-mode") }
+                    .buttonStyle(CyberButtonStyle(variant: .outline, fullWidth: true))
+                Button("Autopilot") { openWindow(id: "autopilot") }
+                    .buttonStyle(CyberButtonStyle(variant: .outline, fullWidth: true))
+            }
+            Toggle("Wake word", isOn: Binding(
+                get: { voice.wakeWordEnabled },
+                set: { voice.setWakeWord(enabled: $0) }
+            ))
+            .toggleStyle(.switch)
+            .tint(CyberTheme.accent)
+            .font(CyberFont.label)
+            .foregroundStyle(CyberTheme.mutedForeground)
             Button("Reconnect") { connection.reconnect() }
                 .buttonStyle(CyberButtonStyle(variant: .secondary, fullWidth: true))
         }

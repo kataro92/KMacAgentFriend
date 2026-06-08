@@ -241,6 +241,15 @@ final class DaemonConnection: ObservableObject {
                 message: "← reply",
                 detail: json["text"] as? String
             )
+        case "tts_stopped":
+            if agentStatus == "speaking" {
+                agentStatus = "idle"
+            }
+            ActivityLogStore.shared.log(
+                level: "info",
+                category: "voice",
+                message: "Speech interrupted (barge-in)"
+            )
         case "pong":
             if let ms = json["latency_ms"] as? Double {
                 lastLatencyMs = ms

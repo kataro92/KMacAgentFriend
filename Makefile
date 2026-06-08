@@ -1,4 +1,4 @@
-.PHONY: dev install test lint health
+.PHONY: dev install test lint health spec
 
 dev:
 	./scripts/dev_run.sh
@@ -17,6 +17,10 @@ test:
 
 lint:
 	.venv/bin/ruff check agent tests
+
+# Usage: make spec KIND=technical SLUG=voice-barge-in TITLE="Barge-in"
+spec:
+	python3 scripts/new_spec.py $(KIND) $(SLUG) "$(TITLE)"
 
 health:
 	@token=$$(.venv/bin/python -c "from kmac_agent_friend.config import get_settings, resolve_api_token; get_settings.cache_clear(); print(resolve_api_token(get_settings()))"); \

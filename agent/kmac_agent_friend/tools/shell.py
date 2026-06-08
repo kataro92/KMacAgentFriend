@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from kmac_agent_friend.config import Settings
 from kmac_agent_friend.paths import PathNotAllowedError, resolve_allowed_path
+from kmac_agent_friend.security.ratelimit import tool_rate_limiter
 
 BLOCKED_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bsudo\b", re.I), "sudo"),
@@ -98,6 +99,15 @@ async def run_shell(
     preflight = check_command(command, confirm=confirm)
     if preflight is not None:
         return preflight
+
+    if not tool_rate_limiter.allow("shell", settings.tool_rate_limit_per_minute):
+        return ShellResult(
+            ok=False,
+            error=(
+                f"Tool rate limit exceeded "
+                f"({settings.tool_rate_limit_per_minute}/min). Try again shortly."
+            ),
+        )
 
     try:
         workdir = resolve_allowed_path(cwd, settings)

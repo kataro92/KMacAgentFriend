@@ -33,12 +33,24 @@ class Settings(BaseSettings):
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "llama3.2"
     ollama_vlm_model: str = "llava"
+    ollama_embed_model: str = "nomic-embed-text"
     moltbook_url: str = ""
     whisper_model: str = "mlx-community/whisper-small-mlx"
     tts_language: str = "en"
     kaf_project_dirs: str = ""
     background_interval_seconds: float = 120.0
     hf_token: str = Field(default="", validation_alias="HF_TOKEN")
+
+    # Phase 4 — vision: never write captured frames to disk unless explicitly enabled.
+    vision_persist_frames: bool = False
+    # Performance — keep Ollama models resident to avoid reload latency on 16 GB.
+    pin_ollama_models: bool = True
+    # Security — cap tool executions to throttle runaway loops.
+    tool_rate_limit_per_minute: int = 60
+    # Autopilot — when off, background autonomy stays read-only / suggestion-only.
+    autopilot_enabled: bool = False
+    # Mock mode — serve canned replies so the Swift UI works without Ollama.
+    mock_mode: bool = False
 
     @field_validator("kaf_data_dir", mode="before")
     @classmethod

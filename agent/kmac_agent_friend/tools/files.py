@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from kmac_agent_friend.config import Settings
 from kmac_agent_friend.paths import PathNotAllowedError, resolve_allowed_path
+from kmac_agent_friend.security.ratelimit import tool_rate_limiter
 
 
 @dataclass
@@ -63,6 +64,12 @@ def write_file(
     *,
     confirm: bool = False,
 ) -> FileOpResult:
+    if not tool_rate_limiter.allow("write", settings.tool_rate_limit_per_minute):
+        return FileOpResult(
+            ok=False,
+            error=f"Tool rate limit exceeded ({settings.tool_rate_limit_per_minute}/min).",
+        )
+
     try:
         path = resolve_allowed_path(path_str, settings)
     except PathNotAllowedError as exc:

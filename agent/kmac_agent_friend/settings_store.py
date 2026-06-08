@@ -17,11 +17,17 @@ EDITABLE_FIELDS = (
     "ollama_host",
     "ollama_model",
     "ollama_vlm_model",
+    "ollama_embed_model",
     "whisper_model",
     "tts_language",
     "kaf_project_dirs",
     "moltbook_url",
     "background_interval_seconds",
+    "vision_persist_frames",
+    "pin_ollama_models",
+    "tool_rate_limit_per_minute",
+    "autopilot_enabled",
+    "mock_mode",
 )
 
 
@@ -29,11 +35,17 @@ class UserSettingsPatch(BaseModel):
     ollama_host: str | None = None
     ollama_model: str | None = None
     ollama_vlm_model: str | None = None
+    ollama_embed_model: str | None = None
     whisper_model: str | None = None
     tts_language: str | None = None
     kaf_project_dirs: str | None = None
     moltbook_url: str | None = None
     background_interval_seconds: float | None = Field(default=None, gt=0)
+    vision_persist_frames: bool | None = None
+    pin_ollama_models: bool | None = None
+    tool_rate_limit_per_minute: int | None = Field(default=None, ge=0)
+    autopilot_enabled: bool | None = None
+    mock_mode: bool | None = None
 
 
 def user_settings_path(data_dir: Path) -> Path:

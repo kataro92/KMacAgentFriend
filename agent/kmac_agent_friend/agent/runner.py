@@ -10,6 +10,7 @@ import httpx
 
 from kmac_agent_friend.config import Settings
 from kmac_agent_friend.memory.history import DEFAULT_CONVERSATION_ID, ConversationStore
+from kmac_agent_friend.memory.service import MemoryService
 from kmac_agent_friend.tools import list_dir, read_file, run_shell
 from kmac_agent_friend.voice.chat import ChatResult
 
@@ -65,6 +66,24 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall_memory",
+            "description": (
+                "Search long-term semantic memory for relevant past facts or "
+                "conversations. Use before answering questions about the user."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "k": {"type": "integer"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -79,6 +98,21 @@ async def _execute_tool(name: str, arguments: dict[str, Any], settings: Settings
             settings,
             cwd=str(arguments.get("cwd", ".")),
             confirm=bool(arguments.get("confirm", False)),
+        )
+    elif name == "recall_memory":
+        recall = await MemoryService(settings).recall(
+            str(arguments.get("query", "")),
+            k=int(arguments.get("k", 5) or 5),
+        )
+        return json.dumps(
+            {
+                "ok": recall.ok,
+                "error": recall.error,
+                "memories": [
+                    {"text": r.text, "score": round(r.score, 4)}
+                    for r in (recall.records or [])
+                ],
+            }
         )
     else:
         return json.dumps({"ok": False, "error": f"Unknown tool: {name}"})

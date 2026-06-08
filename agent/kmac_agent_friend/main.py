@@ -28,7 +28,8 @@ from kmac_agent_friend.config import (
 )
 from kmac_agent_friend.confirm import confirmation_manager
 from kmac_agent_friend.forum import MoltbookClient as ForumClient
-from kmac_agent_friend.memory import ConversationStore
+from kmac_agent_friend.memory import ConversationStore, MemoryService
+from kmac_agent_friend.performance import inference_gate, pin_models
 from kmac_agent_friend.settings_store import (
     EDITABLE_FIELDS,
     UserSettingsPatch,
@@ -38,12 +39,13 @@ from kmac_agent_friend.settings_store import (
 )
 from kmac_agent_friend.state import AgentStatus, agent_state
 from kmac_agent_friend.tools import list_dir, read_file, run_shell, write_file
-from kmac_agent_friend.vision import analyze_image
+from kmac_agent_friend.vision import analyze_image, maybe_persist_frame
 from kmac_agent_friend.voice import (
     chat_reply,
     model_status,
     resolve_whisper_model,
     speak_text,
+    stop_speech,
     transcribe_for_turn,
     warm_whisper_model,
 )
@@ -144,6 +146,17 @@ async def _warm_voice_stt() -> None:
         )
 
 
+async def _pin_models_task() -> None:
+    settings = get_settings()
+    if not await _ollama_reachable(settings.ollama_host):
+        await _record_activity(
+            "info", "performance", "Ollama unreachable — skipping model pinning"
+        )
+        return
+    results = await pin_models(settings)
+    await _record_activity("info", "performance", "Pinned Ollama models", results)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
@@ -162,11 +175,21 @@ async def lifespan(app: FastAPI):
     if not settings.kaf_api_token:
         logger.info("API token (save to .env as KAF_API_TOKEN): %s", token)
     warmup_task = asyncio.create_task(_warm_voice_stt())
+    pin_task: asyncio.Task[None] | None = None
+    if settings.pin_ollama_models:
+        pin_task = asyncio.create_task(_pin_models_task())
     yield
     warmup_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await warmup_task
+    if pin_task is not None:
+        pin_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await pin_task
     await background_worker.stop()
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    await mcp_supervisor.stop_all()
     logger.info("KMacAgentFriend daemon stopped")
 
 
@@ -202,12 +225,13 @@ async def log_http_activity(request: Request, call_next):
 @app.get("/health")
 async def health(_: str = Depends(verify_token)):
     settings = get_settings()
-    ollama_ok = await _ollama_reachable(settings.ollama_host)
+    ollama_ok = True if settings.mock_mode else await _ollama_reachable(settings.ollama_host)
     return {
         "ok": True,
         "service": "kmac-agent-friend",
         "version": "0.1.0",
         "api_version": 4,
+        "mock_mode": settings.mock_mode,
         "ollama": ollama_ok,
         "ollama_host": settings.ollama_host,
         "model": settings.ollama_model,
@@ -292,6 +316,80 @@ async def ping(_: str = Depends(verify_token)):
     return {"pong": True, "ts": time.time()}
 
 
+@app.get("/api/security/audit")
+async def security_audit(_: str = Depends(verify_token)):
+    from kmac_agent_friend.security import audit_sandbox
+
+    settings = get_settings()
+    findings = audit_sandbox(settings)
+    return {
+        "ok": all(f.level != "error" for f in findings),
+        "findings": [f.to_dict() for f in findings],
+        "tool_rate_limit_per_minute": settings.tool_rate_limit_per_minute,
+    }
+
+
+@app.get("/api/mcp/status")
+async def mcp_status(_: str = Depends(verify_token)):
+    from kmac_agent_friend.mcp import load_server_configs
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    settings = get_settings()
+    mcp_supervisor.register_all(load_server_configs(settings))
+    return {"ok": True, **mcp_supervisor.status()}
+
+
+class MCPServerRequest(BaseModel):
+    name: str
+
+
+@app.post("/api/mcp/start")
+async def mcp_start(body: MCPServerRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.mcp import load_server_configs
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    settings = get_settings()
+    mcp_supervisor.register_all(load_server_configs(settings))
+    ok = await mcp_supervisor.ensure(body.name)
+    if not ok:
+        return {"ok": False, "error": f"Unknown or unstartable MCP server: {body.name}"}
+    await _record_activity("info", "mcp", "MCP server started", {"name": body.name})
+    return {"ok": True, **mcp_supervisor.status()}
+
+
+@app.post("/api/mcp/stop")
+async def mcp_stop(body: MCPServerRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    stopped = await mcp_supervisor.stop(body.name)
+    return {"ok": stopped, "error": "" if stopped else "Server not running"}
+
+
+@app.get("/api/performance/status")
+async def performance_status(_: str = Depends(verify_token)):
+    status = inference_gate.status()
+    settings = get_settings()
+    return {
+        "ok": True,
+        "inference": {
+            "active": status.active,
+            "waiting": status.waiting,
+            "started_at": status.started_at,
+        },
+        "pin_ollama_models": settings.pin_ollama_models,
+    }
+
+
+@app.post("/api/performance/pin")
+async def performance_pin(_: str = Depends(verify_token)):
+    settings = get_settings()
+    if not await _ollama_reachable(settings.ollama_host):
+        return {"ok": False, "error": "Ollama unreachable"}
+    results = await pin_models(settings)
+    await _record_activity("info", "performance", "Pinned Ollama models", results)
+    return {"ok": True, "models": results}
+
+
 class BackgroundStartRequest(BaseModel):
     task: str = "moltbook"
     interval_seconds: float = 30.0
@@ -304,6 +402,12 @@ async def background_status(_: str = Depends(verify_token)):
 
 @app.post("/api/background/start")
 async def background_start(body: BackgroundStartRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.background.handlers import build_tick_handler
+
+    settings = get_settings()
+    handler = build_tick_handler(body.task, settings)
+    if handler is not None:
+        background_worker.set_tick_handler(handler)
     await background_worker.start(body.task, interval=body.interval_seconds)
     agent_state.background_task = body.task
     await _set_status(AgentStatus.BACKGROUND, action=body.task)
@@ -448,19 +552,32 @@ async def vision_analyze(
         return {"ok": False, "error": "Empty image file"}
 
     settings = get_settings()
+    saved = maybe_persist_frame(image_bytes, settings)
+    if saved is not None:
+        await _record_activity("info", "vision", "Frame persisted", {"path": str(saved)})
     await _set_status(AgentStatus.ACTING, action="vision")
     try:
-        result = await analyze_image(
-            image_bytes,
-            prompt,
-            ollama_host=settings.ollama_host,
-            model=settings.ollama_vlm_model,
-        )
+        if settings.mock_mode:
+            from kmac_agent_friend.mock import mock_vision_result
+
+            result = mock_vision_result()
+        else:
+            async with inference_gate.slot("vision"):
+                result = await analyze_image(
+                    image_bytes,
+                    prompt,
+                    ollama_host=settings.ollama_host,
+                    model=settings.ollama_vlm_model,
+                )
         if not result.ok:
             await _set_status(AgentStatus.ERROR, action=result.error)
             return {"ok": False, "error": result.error}
         await ws_manager.broadcast({"type": "reply", "text": result.description})
-        return {"ok": True, "description": result.description}
+        return {
+            "ok": True,
+            "description": result.description,
+            "frame_persisted": saved is not None,
+        }
     finally:
         await _set_status(AgentStatus.IDLE)
 
@@ -478,6 +595,262 @@ async def forum_feed(_: str = Depends(verify_token)):
             {"id": p.id, "author": p.author, "title": p.title, "body": p.body}
             for p in feed.posts
         ],
+    }
+
+
+class MemoryAddRequest(BaseModel):
+    text: str
+    metadata: dict[str, str] | None = None
+
+
+class MemorySearchRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+@app.get("/api/memory/status")
+async def memory_status(_: str = Depends(verify_token)):
+    settings = get_settings()
+    service = MemoryService(settings)
+    from kmac_agent_friend.memory import chromadb_available
+
+    return {
+        "ok": True,
+        "count": service.store.count(),
+        "embed_model": settings.ollama_embed_model,
+        "backend": "chromadb" if chromadb_available() else "sqlite",
+    }
+
+
+@app.post("/api/memory/add")
+async def memory_add(body: MemoryAddRequest, _: str = Depends(verify_token)):
+    settings = get_settings()
+    service = MemoryService(settings)
+    result = await service.remember(body.text, metadata=body.metadata)
+    if not result.ok:
+        return {"ok": False, "error": result.error}
+    await _record_activity("info", "memory", "Stored long-term memory", {"id": result.record_id})
+    return {"ok": True, "id": result.record_id}
+
+
+@app.post("/api/memory/search")
+async def memory_search(body: MemorySearchRequest, _: str = Depends(verify_token)):
+    settings = get_settings()
+    service = MemoryService(settings)
+    result = await service.recall(body.query, k=body.k)
+    if not result.ok:
+        return {"ok": False, "error": result.error}
+    return {
+        "ok": True,
+        "records": [
+            {"id": r.id, "text": r.text, "score": round(r.score, 4), "metadata": r.metadata}
+            for r in (result.records or [])
+        ],
+    }
+
+
+@app.get("/api/knowledge/domains")
+async def knowledge_domains(_: str = Depends(verify_token)):
+    from kmac_agent_friend.knowledge import KnowledgeIngestor, knowledge_root
+
+    settings = get_settings()
+    ingestor = KnowledgeIngestor(settings)
+    return {
+        "ok": True,
+        "root": str(knowledge_root(settings)),
+        "domains": ingestor.domains(),
+    }
+
+
+class KnowledgeIngestRequest(BaseModel):
+    force: bool = False
+
+
+@app.post("/api/knowledge/ingest")
+async def knowledge_ingest(
+    body: KnowledgeIngestRequest | None = None,
+    _: str = Depends(verify_token),
+):
+    from kmac_agent_friend.knowledge import KnowledgeIngestor
+
+    settings = get_settings()
+    ingestor = KnowledgeIngestor(settings)
+    report = await ingestor.ingest_all(force=bool(body and body.force))
+    await _record_activity(
+        "info",
+        "knowledge",
+        "Knowledge ingestion run",
+        {"ingested": report.files_ingested, "chunks": report.chunks_added},
+    )
+    return {
+        "ok": report.ok,
+        "files_scanned": report.files_scanned,
+        "files_ingested": report.files_ingested,
+        "chunks_added": report.chunks_added,
+        "skipped": report.skipped,
+        "errors": report.errors,
+    }
+
+
+class AutopilotPolicyRequest(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/autopilot/policy")
+async def autopilot_policy(_: str = Depends(verify_token)):
+    from kmac_agent_friend.autopilot import AutopilotPolicy
+
+    settings = get_settings()
+    policy = AutopilotPolicy(settings)
+    return {
+        "ok": True,
+        "enabled": policy.enabled,
+        "allowed_actions": policy.allowed_actions(),
+    }
+
+
+@app.post("/api/autopilot/policy")
+async def set_autopilot_policy(body: AutopilotPolicyRequest, _: str = Depends(verify_token)):
+    settings = get_settings()
+    patch_user_settings(settings.kaf_data_dir, UserSettingsPatch(autopilot_enabled=body.enabled))
+    reload_settings()
+    await _record_activity(
+        "info", "autopilot", "Autopilot policy updated", {"enabled": body.enabled}
+    )
+    from kmac_agent_friend.autopilot import AutopilotPolicy
+
+    policy = AutopilotPolicy(get_settings())
+    return {"ok": True, "enabled": policy.enabled, "allowed_actions": policy.allowed_actions()}
+
+
+@app.get("/api/autopilot/decisions")
+async def autopilot_decisions(limit: int = 100, _: str = Depends(verify_token)):
+    from kmac_agent_friend.autopilot import DecisionAuditLog
+
+    settings = get_settings()
+    log = DecisionAuditLog.from_settings(settings)
+    return {"ok": True, "decisions": log.recent(limit=min(limit, 500))}
+
+
+class MissionCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+
+
+class MissionUpdateRequest(BaseModel):
+    status: str | None = None
+    progress: int | None = None
+    note: str | None = None
+
+
+@app.get("/api/missions")
+async def missions_list(status: str | None = None, _: str = Depends(verify_token)):
+    from kmac_agent_friend.missions import MissionStatus, MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    status_filter = None
+    if status:
+        try:
+            status_filter = MissionStatus(status)
+        except ValueError:
+            return {"ok": False, "error": f"Unknown status: {status}"}
+    return {"ok": True, "missions": [m.to_dict() for m in store.list(status=status_filter)]}
+
+
+@app.post("/api/missions")
+async def missions_create(body: MissionCreateRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.missions import MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    try:
+        mission = store.create(body.title, body.description)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    await _record_activity("info", "missions", "Mission created", {"id": mission.id})
+    return {"ok": True, "mission": mission.to_dict()}
+
+
+@app.patch("/api/missions/{mission_id}")
+async def missions_update(
+    mission_id: str,
+    body: MissionUpdateRequest,
+    _: str = Depends(verify_token),
+):
+    from kmac_agent_friend.missions import MissionStatus, MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    status = None
+    if body.status:
+        try:
+            status = MissionStatus(body.status)
+        except ValueError:
+            return {"ok": False, "error": f"Unknown status: {body.status}"}
+    mission = store.update(
+        mission_id, status=status, progress=body.progress, note=body.note
+    )
+    if mission is None:
+        return {"ok": False, "error": "Mission not found"}
+    return {"ok": True, "mission": mission.to_dict()}
+
+
+@app.delete("/api/missions/{mission_id}")
+async def missions_delete(mission_id: str, _: str = Depends(verify_token)):
+    from kmac_agent_friend.missions import MissionStore
+
+    settings = get_settings()
+    store = MissionStore.from_settings(settings)
+    deleted = store.delete(mission_id)
+    return {"ok": deleted, "error": "" if deleted else "Mission not found"}
+
+
+@app.get("/api/reincarnation/export")
+async def reincarnation_export(_: str = Depends(verify_token)):
+    from kmac_agent_friend.reincarnation import export_bundle
+
+    settings = get_settings()
+    bundle = export_bundle(settings)
+    await _record_activity(
+        "info",
+        "reincarnation",
+        "Exported reincarnation bundle",
+        {"memories": len(bundle["memories"]), "conversations": len(bundle["conversations"])},
+    )
+    return {"ok": True, "bundle": bundle}
+
+
+class ReincarnationImportRequest(BaseModel):
+    bundle: dict[str, Any]
+    apply_settings: bool = True
+
+
+@app.post("/api/reincarnation/import")
+async def reincarnation_import(
+    body: ReincarnationImportRequest,
+    _: str = Depends(verify_token),
+):
+    from kmac_agent_friend.reincarnation import import_bundle
+
+    settings = get_settings()
+    report = import_bundle(settings, body.bundle, apply_settings=body.apply_settings)
+    if report.settings_applied:
+        reload_settings()
+    await _record_activity(
+        "info",
+        "reincarnation",
+        "Imported reincarnation bundle",
+        {"memories": report.memories, "messages": report.messages},
+    )
+    return {
+        "ok": report.ok,
+        "conversations": report.conversations,
+        "messages": report.messages,
+        "memories": report.memories,
+        "knowledge": report.knowledge,
+        "settings_applied": report.settings_applied,
+        "errors": report.errors,
     }
 
 
@@ -519,19 +892,30 @@ async def chat(body: ChatRequest, _: str = Depends(verify_token)):
 
     await _set_status(AgentStatus.THINKING, action="chatting")
     try:
-        if body.use_tools:
-            result = await chat_with_tools(text, settings=settings, store=store)
-        else:
-            history = store.recent(limit=20)
-            result = await chat_reply(
-                text,
-                ollama_host=settings.ollama_host,
-                model=settings.ollama_model,
-                history=history,
-            )
+        if settings.mock_mode:
+            from kmac_agent_friend.mock import mock_chat_reply
+
+            result = mock_chat_reply(text)
             if result.ok:
                 store.append("user", text)
                 store.append("assistant", result.reply)
+            agent_state.message_count += 1
+            await ws_manager.broadcast({"type": "reply", "text": result.reply})
+            return {"ok": True, "reply": result.reply, "mock": True}
+        async with inference_gate.slot("chat"):
+            if body.use_tools:
+                result = await chat_with_tools(text, settings=settings, store=store)
+            else:
+                history = store.recent(limit=20)
+                result = await chat_reply(
+                    text,
+                    ollama_host=settings.ollama_host,
+                    model=settings.ollama_model,
+                    history=history,
+                )
+                if result.ok:
+                    store.append("user", text)
+                    store.append("assistant", result.reply)
         if not result.ok:
             await _set_status(AgentStatus.ERROR, action=result.error)
             return {"ok": False, "error": result.error}
@@ -628,6 +1012,18 @@ async def voice_speak(body: SpeakRequest, _: str = Depends(verify_token)):
         await _set_status(AgentStatus.IDLE)
 
 
+@app.post("/api/voice/stop")
+async def voice_stop(_: str = Depends(verify_token)):
+    """Barge-in: interrupt any in-progress TTS playback."""
+    stopped = stop_speech()
+    if stopped:
+        await _record_activity("info", "voice", "Speech interrupted (barge-in)", {"count": stopped})
+        await ws_manager.broadcast({"type": "tts_stopped", "count": stopped})
+    if agent_state.status == AgentStatus.SPEAKING:
+        await _set_status(AgentStatus.IDLE)
+    return {"ok": True, "stopped": stopped}
+
+
 @app.post("/api/voice/transcribe")
 async def voice_transcribe(
     file: UploadFile = File(...),
@@ -640,11 +1036,12 @@ async def voice_transcribe(
     settings = get_settings()
     await _set_status(AgentStatus.THINKING, action="transcribing")
     try:
-        stt, _, _ = await transcribe_for_turn(
-            wav_bytes,
-            settings.whisper_model,
-            on_progress=_broadcast_voice_progress,
-        )
+        async with inference_gate.slot("stt"):
+            stt, _, _ = await transcribe_for_turn(
+                wav_bytes,
+                settings.whisper_model,
+                on_progress=_broadcast_voice_progress,
+            )
         if not stt.ok:
             await _set_status(AgentStatus.ERROR, action=stt.error)
             return {"ok": False, "error": stt.error}
@@ -672,11 +1069,12 @@ async def voice_turn(
 
     try:
         await _set_status(AgentStatus.THINKING, action="transcribing")
-        stt, model_used, fallback_note = await transcribe_for_turn(
-            wav_bytes,
-            settings.whisper_model,
-            on_progress=_broadcast_voice_progress,
-        )
+        async with inference_gate.slot("stt"):
+            stt, model_used, fallback_note = await transcribe_for_turn(
+                wav_bytes,
+                settings.whisper_model,
+                on_progress=_broadcast_voice_progress,
+            )
         if not stt.ok:
             await _set_status(AgentStatus.ERROR, action=stt.error)
             return {"ok": False, "error": stt.error}
@@ -706,13 +1104,19 @@ async def voice_turn(
         history = store.recent(limit=20)
 
         await _set_status(AgentStatus.THINKING, action="chatting")
-        await _broadcast_voice_progress("chat", f"Asking Ollama ({settings.ollama_model})")
-        chat = await chat_reply(
-            stt.text,
-            ollama_host=settings.ollama_host,
-            model=settings.ollama_model,
-            history=history,
-        )
+        if settings.mock_mode:
+            from kmac_agent_friend.mock import mock_chat_reply
+
+            chat = mock_chat_reply(stt.text)
+        else:
+            await _broadcast_voice_progress("chat", f"Asking Ollama ({settings.ollama_model})")
+            async with inference_gate.slot("chat"):
+                chat = await chat_reply(
+                    stt.text,
+                    ollama_host=settings.ollama_host,
+                    model=settings.ollama_model,
+                    history=history,
+                )
         if not chat.ok:
             await _set_status(AgentStatus.ERROR, action=chat.error)
             return {
@@ -811,7 +1215,15 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "get_state":
                 await websocket.send_json(_state_event())
             elif msg_type == "ptt_start":
+                # Pressing PTT while the agent is speaking interrupts it (barge-in).
+                if agent_state.status == AgentStatus.SPEAKING:
+                    stopped = stop_speech()
+                    if stopped:
+                        await ws_manager.broadcast({"type": "tts_stopped", "count": stopped})
                 await _set_status(AgentStatus.LISTENING, action="push-to-talk")
+            elif msg_type == "barge_in":
+                stopped = stop_speech()
+                await websocket.send_json({"type": "tts_stopped", "count": stopped})
             elif msg_type == "ptt_end":
                 if agent_state.status == AgentStatus.LISTENING:
                     await _set_status(AgentStatus.IDLE)
