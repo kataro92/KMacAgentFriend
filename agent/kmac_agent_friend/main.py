@@ -29,6 +29,7 @@ from kmac_agent_friend.config import (
 from kmac_agent_friend.confirm import confirmation_manager
 from kmac_agent_friend.forum import MoltbookClient as ForumClient
 from kmac_agent_friend.memory import ConversationStore, MemoryService
+from kmac_agent_friend.performance import inference_gate, pin_models
 from kmac_agent_friend.settings_store import (
     EDITABLE_FIELDS,
     UserSettingsPatch,
@@ -144,6 +145,17 @@ async def _warm_voice_stt() -> None:
         )
 
 
+async def _pin_models_task() -> None:
+    settings = get_settings()
+    if not await _ollama_reachable(settings.ollama_host):
+        await _record_activity(
+            "info", "performance", "Ollama unreachable — skipping model pinning"
+        )
+        return
+    results = await pin_models(settings)
+    await _record_activity("info", "performance", "Pinned Ollama models", results)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
@@ -162,11 +174,21 @@ async def lifespan(app: FastAPI):
     if not settings.kaf_api_token:
         logger.info("API token (save to .env as KAF_API_TOKEN): %s", token)
     warmup_task = asyncio.create_task(_warm_voice_stt())
+    pin_task: asyncio.Task[None] | None = None
+    if settings.pin_ollama_models:
+        pin_task = asyncio.create_task(_pin_models_task())
     yield
     warmup_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await warmup_task
+    if pin_task is not None:
+        pin_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await pin_task
     await background_worker.stop()
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    await mcp_supervisor.stop_all()
     logger.info("KMacAgentFriend daemon stopped")
 
 
@@ -290,6 +312,67 @@ async def get_state(_: str = Depends(verify_token)):
 async def ping(_: str = Depends(verify_token)):
     """Round-trip latency check for Swift shell."""
     return {"pong": True, "ts": time.time()}
+
+
+@app.get("/api/mcp/status")
+async def mcp_status(_: str = Depends(verify_token)):
+    from kmac_agent_friend.mcp import load_server_configs
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    settings = get_settings()
+    mcp_supervisor.register_all(load_server_configs(settings))
+    return {"ok": True, **mcp_supervisor.status()}
+
+
+class MCPServerRequest(BaseModel):
+    name: str
+
+
+@app.post("/api/mcp/start")
+async def mcp_start(body: MCPServerRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.mcp import load_server_configs
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    settings = get_settings()
+    mcp_supervisor.register_all(load_server_configs(settings))
+    ok = await mcp_supervisor.ensure(body.name)
+    if not ok:
+        return {"ok": False, "error": f"Unknown or unstartable MCP server: {body.name}"}
+    await _record_activity("info", "mcp", "MCP server started", {"name": body.name})
+    return {"ok": True, **mcp_supervisor.status()}
+
+
+@app.post("/api/mcp/stop")
+async def mcp_stop(body: MCPServerRequest, _: str = Depends(verify_token)):
+    from kmac_agent_friend.mcp.supervisor import mcp_supervisor
+
+    stopped = await mcp_supervisor.stop(body.name)
+    return {"ok": stopped, "error": "" if stopped else "Server not running"}
+
+
+@app.get("/api/performance/status")
+async def performance_status(_: str = Depends(verify_token)):
+    status = inference_gate.status()
+    settings = get_settings()
+    return {
+        "ok": True,
+        "inference": {
+            "active": status.active,
+            "waiting": status.waiting,
+            "started_at": status.started_at,
+        },
+        "pin_ollama_models": settings.pin_ollama_models,
+    }
+
+
+@app.post("/api/performance/pin")
+async def performance_pin(_: str = Depends(verify_token)):
+    settings = get_settings()
+    if not await _ollama_reachable(settings.ollama_host):
+        return {"ok": False, "error": "Ollama unreachable"}
+    results = await pin_models(settings)
+    await _record_activity("info", "performance", "Pinned Ollama models", results)
+    return {"ok": True, "models": results}
 
 
 class BackgroundStartRequest(BaseModel):
@@ -459,12 +542,13 @@ async def vision_analyze(
         await _record_activity("info", "vision", "Frame persisted", {"path": str(saved)})
     await _set_status(AgentStatus.ACTING, action="vision")
     try:
-        result = await analyze_image(
-            image_bytes,
-            prompt,
-            ollama_host=settings.ollama_host,
-            model=settings.ollama_vlm_model,
-        )
+        async with inference_gate.slot("vision"):
+            result = await analyze_image(
+                image_bytes,
+                prompt,
+                ollama_host=settings.ollama_host,
+                model=settings.ollama_vlm_model,
+            )
         if not result.ok:
             await _set_status(AgentStatus.ERROR, action=result.error)
             return {"ok": False, "error": result.error}
@@ -788,19 +872,20 @@ async def chat(body: ChatRequest, _: str = Depends(verify_token)):
 
     await _set_status(AgentStatus.THINKING, action="chatting")
     try:
-        if body.use_tools:
-            result = await chat_with_tools(text, settings=settings, store=store)
-        else:
-            history = store.recent(limit=20)
-            result = await chat_reply(
-                text,
-                ollama_host=settings.ollama_host,
-                model=settings.ollama_model,
-                history=history,
-            )
-            if result.ok:
-                store.append("user", text)
-                store.append("assistant", result.reply)
+        async with inference_gate.slot("chat"):
+            if body.use_tools:
+                result = await chat_with_tools(text, settings=settings, store=store)
+            else:
+                history = store.recent(limit=20)
+                result = await chat_reply(
+                    text,
+                    ollama_host=settings.ollama_host,
+                    model=settings.ollama_model,
+                    history=history,
+                )
+                if result.ok:
+                    store.append("user", text)
+                    store.append("assistant", result.reply)
         if not result.ok:
             await _set_status(AgentStatus.ERROR, action=result.error)
             return {"ok": False, "error": result.error}
@@ -909,11 +994,12 @@ async def voice_transcribe(
     settings = get_settings()
     await _set_status(AgentStatus.THINKING, action="transcribing")
     try:
-        stt, _, _ = await transcribe_for_turn(
-            wav_bytes,
-            settings.whisper_model,
-            on_progress=_broadcast_voice_progress,
-        )
+        async with inference_gate.slot("stt"):
+            stt, _, _ = await transcribe_for_turn(
+                wav_bytes,
+                settings.whisper_model,
+                on_progress=_broadcast_voice_progress,
+            )
         if not stt.ok:
             await _set_status(AgentStatus.ERROR, action=stt.error)
             return {"ok": False, "error": stt.error}
@@ -941,11 +1027,12 @@ async def voice_turn(
 
     try:
         await _set_status(AgentStatus.THINKING, action="transcribing")
-        stt, model_used, fallback_note = await transcribe_for_turn(
-            wav_bytes,
-            settings.whisper_model,
-            on_progress=_broadcast_voice_progress,
-        )
+        async with inference_gate.slot("stt"):
+            stt, model_used, fallback_note = await transcribe_for_turn(
+                wav_bytes,
+                settings.whisper_model,
+                on_progress=_broadcast_voice_progress,
+            )
         if not stt.ok:
             await _set_status(AgentStatus.ERROR, action=stt.error)
             return {"ok": False, "error": stt.error}
@@ -976,12 +1063,13 @@ async def voice_turn(
 
         await _set_status(AgentStatus.THINKING, action="chatting")
         await _broadcast_voice_progress("chat", f"Asking Ollama ({settings.ollama_model})")
-        chat = await chat_reply(
-            stt.text,
-            ollama_host=settings.ollama_host,
-            model=settings.ollama_model,
-            history=history,
-        )
+        async with inference_gate.slot("chat"):
+            chat = await chat_reply(
+                stt.text,
+                ollama_host=settings.ollama_host,
+                model=settings.ollama_model,
+                history=history,
+            )
         if not chat.ok:
             await _set_status(AgentStatus.ERROR, action=chat.error)
             return {
