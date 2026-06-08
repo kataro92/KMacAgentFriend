@@ -5,6 +5,7 @@ final class VoiceSession: ObservableObject {
     @Published var isRecording = false
     @Published var isReplaying = false
     @Published var statusMessage: String?
+    @Published var wakeWordEnabled = false
 
     var canReplayLastReply: Bool {
         guard let connection, !isRecording, !isReplaying else { return false }
@@ -15,6 +16,8 @@ final class VoiceSession: ObservableObject {
     private weak var connection: DaemonConnection?
     private let recorder = AudioRecorder()
     private let ptt = PTTController()
+    private let wakeWord = WakeWordDetector()
+    private let client = DaemonClient()
 
     func bind(_ connection: DaemonConnection) {
         self.connection = connection
@@ -28,14 +31,55 @@ final class VoiceSession: ObservableObject {
             Task { await self?.endPTT() }
         }
         ptt.start()
+
+        wakeWord.onWake = { [weak self] in
+            Task { await self?.handleWake() }
+        }
     }
 
     func stop() {
         ptt.stop()
+        wakeWord.stop()
+    }
+
+    func setWakeWord(enabled: Bool) {
+        wakeWordEnabled = enabled
+        if enabled {
+            wakeWord.start()
+        } else {
+            wakeWord.stop()
+        }
+    }
+
+    /// Wake word fired: barge-in on any current speech, then start a turn.
+    private func handleWake() async {
+        await bargeInIfSpeaking()
+        await beginPTT()
+        // Give the speaker a short window, then submit the captured audio.
+        try? await Task.sleep(nanoseconds: 4_000_000_000)
+        if isRecording {
+            await endPTT()
+        }
+    }
+
+    /// Interrupt in-progress TTS both locally and on the daemon.
+    func bargeInIfSpeaking() async {
+        guard let connection else { return }
+        if connection.agentStatus == "speaking" || isReplaying {
+            isReplaying = false
+            try? await client.stopSpeech()
+            ActivityLogStore.shared.log(
+                level: "info",
+                category: "voice",
+                message: "Barge-in: interrupted speech"
+            )
+        }
     }
 
     func beginPTT() async {
         guard !isRecording, let connection else { return }
+        // Pressing to talk while the agent is speaking interrupts it.
+        await bargeInIfSpeaking()
         let allowed = await recorder.requestPermission()
         guard allowed else {
             statusMessage = AudioRecorderError.permissionDenied.localizedDescription

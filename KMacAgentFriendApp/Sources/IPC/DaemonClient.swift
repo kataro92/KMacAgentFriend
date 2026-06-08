@@ -59,6 +59,45 @@ struct VoiceDownloadResult {
     let error: String?
 }
 
+struct AutopilotPolicy {
+    let enabled: Bool
+    let allowedActions: [String]
+}
+
+struct DecisionEntry: Identifiable {
+    let id: Int
+    let ts: Double
+    let action: String
+    let allowed: Bool
+    let reason: String
+    let summary: String
+
+    init(payload: [String: Any]) {
+        id = payload["id"] as? Int ?? Int.random(in: 0..<Int.max)
+        ts = payload["ts"] as? Double ?? 0
+        action = payload["action"] as? String ?? ""
+        allowed = payload["allowed"] as? Bool ?? false
+        reason = payload["reason"] as? String ?? ""
+        summary = payload["summary"] as? String ?? ""
+    }
+}
+
+struct Mission: Identifiable {
+    let id: String
+    let title: String
+    let description: String
+    let status: String
+    let progress: Int
+
+    init(payload: [String: Any]) {
+        id = payload["id"] as? String ?? UUID().uuidString
+        title = payload["title"] as? String ?? ""
+        description = payload["description"] as? String ?? ""
+        status = payload["status"] as? String ?? "pending"
+        progress = payload["progress"] as? Int ?? 0
+    }
+}
+
 final class DaemonClient {
     private let host = "127.0.0.1"
     private let port = 18750
@@ -202,6 +241,59 @@ final class DaemonClient {
             throw DaemonError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
         return try JSONDecoder().decode(VoiceTurnResponse.self, from: data)
+    }
+
+    /// Barge-in: ask the daemon to interrupt any in-progress TTS playback.
+    @discardableResult
+    func stopSpeech() async throws -> Int {
+        let data = try await authorizedRequest(path: "api/voice/stop", method: "POST", body: nil)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        return json["stopped"] as? Int ?? 0
+    }
+
+    // MARK: Autopilot
+
+    func fetchAutopilotPolicy() async throws -> AutopilotPolicy {
+        let data = try await authorizedGET(path: "api/autopilot/policy")
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        return AutopilotPolicy(
+            enabled: json["enabled"] as? Bool ?? false,
+            allowedActions: json["allowed_actions"] as? [String] ?? []
+        )
+    }
+
+    func setAutopilot(enabled: Bool) async throws -> AutopilotPolicy {
+        let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        let data = try await authorizedRequest(path: "api/autopilot/policy", method: "POST", body: body)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        return AutopilotPolicy(
+            enabled: json["enabled"] as? Bool ?? false,
+            allowedActions: json["allowed_actions"] as? [String] ?? []
+        )
+    }
+
+    func fetchDecisions(limit: Int = 100) async throws -> [DecisionEntry] {
+        let data = try await authorizedGET(path: "api/autopilot/decisions?limit=\(limit)")
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let rows = json["decisions"] as? [[String: Any]] ?? []
+        return rows.map { DecisionEntry(payload: $0) }
+    }
+
+    // MARK: Missions
+
+    func fetchMissions() async throws -> [Mission] {
+        let data = try await authorizedGET(path: "api/missions")
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let rows = json["missions"] as? [[String: Any]] ?? []
+        return rows.map { Mission(payload: $0) }
+    }
+
+    func createMission(title: String, description: String) async throws {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "title": title,
+            "description": description,
+        ])
+        _ = try await authorizedRequest(path: "api/missions", method: "POST", body: body)
     }
 
     func speakText(_ text: String, language: String = "en") async throws -> SpeakResponse {

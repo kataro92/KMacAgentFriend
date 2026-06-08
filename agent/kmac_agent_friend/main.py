@@ -45,6 +45,7 @@ from kmac_agent_friend.voice import (
     model_status,
     resolve_whisper_model,
     speak_text,
+    stop_speech,
     transcribe_for_turn,
     warm_whisper_model,
 )
@@ -1011,6 +1012,18 @@ async def voice_speak(body: SpeakRequest, _: str = Depends(verify_token)):
         await _set_status(AgentStatus.IDLE)
 
 
+@app.post("/api/voice/stop")
+async def voice_stop(_: str = Depends(verify_token)):
+    """Barge-in: interrupt any in-progress TTS playback."""
+    stopped = stop_speech()
+    if stopped:
+        await _record_activity("info", "voice", "Speech interrupted (barge-in)", {"count": stopped})
+        await ws_manager.broadcast({"type": "tts_stopped", "count": stopped})
+    if agent_state.status == AgentStatus.SPEAKING:
+        await _set_status(AgentStatus.IDLE)
+    return {"ok": True, "stopped": stopped}
+
+
 @app.post("/api/voice/transcribe")
 async def voice_transcribe(
     file: UploadFile = File(...),
@@ -1202,7 +1215,15 @@ async def websocket_endpoint(websocket: WebSocket):
             elif msg_type == "get_state":
                 await websocket.send_json(_state_event())
             elif msg_type == "ptt_start":
+                # Pressing PTT while the agent is speaking interrupts it (barge-in).
+                if agent_state.status == AgentStatus.SPEAKING:
+                    stopped = stop_speech()
+                    if stopped:
+                        await ws_manager.broadcast({"type": "tts_stopped", "count": stopped})
                 await _set_status(AgentStatus.LISTENING, action="push-to-talk")
+            elif msg_type == "barge_in":
+                stopped = stop_speech()
+                await websocket.send_json({"type": "tts_stopped", "count": stopped})
             elif msg_type == "ptt_end":
                 if agent_state.status == AgentStatus.LISTENING:
                     await _set_status(AgentStatus.IDLE)
