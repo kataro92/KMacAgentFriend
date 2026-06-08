@@ -25,5 +25,20 @@ struct KMacAgentFriendApp: App {
                 .preferredColorScheme(.dark)
         }
         .defaultSize(width: 760, height: 580)
+
+        Window("Focus Mode", id: "focus-mode") {
+            FocusModeView()
+                .environmentObject(connection)
+                .environmentObject(voice)
+                .preferredColorScheme(.dark)
+        }
+        .defaultSize(width: 520, height: 600)
+
+        Window("Autopilot", id: "autopilot") {
+            AutopilotView()
+                .environmentObject(connection)
+                .preferredColorScheme(.dark)
+        }
+        .defaultSize(width: 560, height: 640)
     }
 }
