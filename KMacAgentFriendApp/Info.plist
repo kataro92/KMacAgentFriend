@@ -26,6 +26,14 @@
 	<string>KMacAgentFriend needs the microphone for voice commands.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>KMacAgentFriend uses the camera only when you confirm a vision request.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>KMacAgentFriend reads your calendar to answer questions about upcoming events.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>KMacAgentFriend reads your calendar to answer questions about upcoming events.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>KMacAgentFriend reads and creates reminders when you ask.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>KMacAgentFriend reads and creates reminders when you ask.</string>
 	<key>KAFProjectRoot</key>
 	<string>$(KAF_PROJECT_ROOT)</string>
 </dict>

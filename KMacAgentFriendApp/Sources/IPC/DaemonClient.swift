@@ -123,9 +123,18 @@ final class DaemonClient {
         if let env = ProcessInfo.processInfo.environment["KAF_API_TOKEN"], !env.isEmpty {
             return env
         }
+        // Prefer the Keychain, then fall back to the on-disk token file and cache it.
+        if let stored = KeychainStore.apiToken, !stored.isEmpty {
+            return stored
+        }
         let tokenPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/KMacAgentFriend/.api_token")
-        return (try? String(contentsOf: tokenPath, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let fileToken = (try? String(contentsOf: tokenPath, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !fileToken.isEmpty {
+            KeychainStore.storeAPIToken(fileToken)
+        }
+        return fileToken
     }
 
     func fetchSettings() async throws -> SettingsPayload {
@@ -249,6 +258,20 @@ final class DaemonClient {
         let data = try await authorizedRequest(path: "api/voice/stop", method: "POST", body: nil)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         return json["stopped"] as? Int ?? 0
+    }
+
+    /// Send a chat message and return the assistant reply (used by Shortcuts).
+    func sendChat(message: String, useTools: Bool = false) async throws -> String {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "message": message,
+            "use_tools": useTools,
+        ])
+        let data = try await authorizedRequest(path: "api/chat", method: "POST", body: body)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        if let reply = json["reply"] as? String, !reply.isEmpty {
+            return reply
+        }
+        throw DaemonError.invalidResponse
     }
 
     // MARK: Autopilot

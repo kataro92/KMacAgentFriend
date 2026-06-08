@@ -34,8 +34,12 @@ struct ControlPanelView: View {
     @EnvironmentObject private var daemonProcess: DaemonProcessManager
     @StateObject private var store = ControlPanelStore()
     @ObservedObject private var activityLog = ActivityLogStore.shared
+    @ObservedObject private var loginItem = LoginItemManager.shared
     @State private var selection: ControlPanelTab = .overview
     @State private var expandedEntryIDs: Set<UUID> = []
+    @State private var upcomingEvents: [CalendarEventSummary] = []
+    @State private var calendarBusy = false
+    private let calendar = CalendarSidecar()
 
     var body: some View {
         NavigationSplitView {
@@ -409,6 +413,53 @@ struct ControlPanelView: View {
                     CyberStatusRow(label: "Token", value: tokenPreview, color: CyberTheme.accentTertiary)
                     CyberStatusRow(label: "Data dir", value: store.dataDirPath.isEmpty ? "—" : store.dataDirPath, color: CyberTheme.mutedForeground)
                     CyberStatusRow(label: "Settings", value: store.userSettingsPath.isEmpty ? "—" : store.userSettingsPath, color: CyberTheme.mutedForeground)
+                }
+            }
+
+            CyberCard(title: "Startup") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: Binding(
+                        get: { loginItem.isEnabled },
+                        set: { loginItem.setEnabled($0) }
+                    )) {
+                        Text("Launch KMacAgentFriend at login")
+                            .font(CyberFont.caption)
+                            .foregroundStyle(CyberTheme.foreground)
+                    }
+                    .toggleStyle(.switch)
+                    .tint(CyberTheme.accent)
+                    CyberStatusRow(label: "Login item", value: loginItem.statusDescription, color: CyberTheme.mutedForeground)
+                    if let error = loginItem.lastError {
+                        CyberPromptLine(prefix: "!", text: error)
+                            .foregroundStyle(CyberTheme.destructive)
+                    }
+                }
+            }
+
+            CyberCard(title: "Calendar & Reminders") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button(calendarBusy ? "Loading…" : "Load upcoming events") {
+                        Task {
+                            calendarBusy = true
+                            upcomingEvents = await calendar.upcomingEvents(within: 7)
+                            calendarBusy = false
+                        }
+                    }
+                    .buttonStyle(CyberButtonStyle(variant: .outline, fullWidth: true))
+                    .disabled(calendarBusy)
+                    if upcomingEvents.isEmpty {
+                        Text("Grant Calendar access, then load to preview the next 7 days.")
+                            .font(CyberFont.label)
+                            .foregroundStyle(CyberTheme.mutedForeground)
+                    } else {
+                        ForEach(upcomingEvents.prefix(8)) { event in
+                            CyberStatusRow(
+                                label: event.start.formatted(date: .abbreviated, time: .shortened),
+                                value: event.title,
+                                color: CyberTheme.accentTertiary
+                            )
+                        }
+                    }
                 }
             }
 
