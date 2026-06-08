@@ -28,7 +28,7 @@ from kmac_agent_friend.config import (
 )
 from kmac_agent_friend.confirm import confirmation_manager
 from kmac_agent_friend.forum import MoltbookClient as ForumClient
-from kmac_agent_friend.memory import ConversationStore
+from kmac_agent_friend.memory import ConversationStore, MemoryService
 from kmac_agent_friend.settings_store import (
     EDITABLE_FIELDS,
     UserSettingsPatch,
@@ -477,6 +477,57 @@ async def forum_feed(_: str = Depends(verify_token)):
         "posts": [
             {"id": p.id, "author": p.author, "title": p.title, "body": p.body}
             for p in feed.posts
+        ],
+    }
+
+
+class MemoryAddRequest(BaseModel):
+    text: str
+    metadata: dict[str, str] | None = None
+
+
+class MemorySearchRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+@app.get("/api/memory/status")
+async def memory_status(_: str = Depends(verify_token)):
+    settings = get_settings()
+    service = MemoryService(settings)
+    from kmac_agent_friend.memory import chromadb_available
+
+    return {
+        "ok": True,
+        "count": service.store.count(),
+        "embed_model": settings.ollama_embed_model,
+        "backend": "chromadb" if chromadb_available() else "sqlite",
+    }
+
+
+@app.post("/api/memory/add")
+async def memory_add(body: MemoryAddRequest, _: str = Depends(verify_token)):
+    settings = get_settings()
+    service = MemoryService(settings)
+    result = await service.remember(body.text, metadata=body.metadata)
+    if not result.ok:
+        return {"ok": False, "error": result.error}
+    await _record_activity("info", "memory", "Stored long-term memory", {"id": result.record_id})
+    return {"ok": True, "id": result.record_id}
+
+
+@app.post("/api/memory/search")
+async def memory_search(body: MemorySearchRequest, _: str = Depends(verify_token)):
+    settings = get_settings()
+    service = MemoryService(settings)
+    result = await service.recall(body.query, k=body.k)
+    if not result.ok:
+        return {"ok": False, "error": result.error}
+    return {
+        "ok": True,
+        "records": [
+            {"id": r.id, "text": r.text, "score": round(r.score, 4), "metadata": r.metadata}
+            for r in (result.records or [])
         ],
     }
 
