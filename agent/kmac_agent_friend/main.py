@@ -23,6 +23,7 @@ from kmac_agent_friend.background import background_worker
 from kmac_agent_friend.config import (
     ensure_data_dirs,
     get_settings,
+    migrate_legacy_data_dir,
     reload_settings,
     resolve_api_token,
 )
@@ -161,6 +162,9 @@ async def _pin_models_task() -> None:
 async def lifespan(app: FastAPI):
     _configure_logging()
     bootstrap = get_settings()
+    if migrate_legacy_data_dir(bootstrap):
+        reload_settings()
+        bootstrap = get_settings()
     if migrate_stored_settings(bootstrap.kaf_data_dir):
         reload_settings()
     settings = get_settings()

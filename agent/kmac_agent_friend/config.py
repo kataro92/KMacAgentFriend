@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import shutil
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,7 +15,8 @@ from kmac_agent_friend.settings_store import load_user_overrides
 from kmac_agent_friend.voice.stt import normalize_whisper_model
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_DATA_DIR = Path.home() / "Library" / "Application Support" / "KMacAgentFriend"
+LEGACY_DATA_DIR = Path.home() / "Library" / "Application Support" / "KMacAgentFriend"
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
 DEFAULT_SANDBOX_DIR = DEFAULT_DATA_DIR / "sandbox"
 
 
@@ -105,6 +107,33 @@ def ensure_data_dirs(settings: Settings | None = None) -> None:
     settings = settings or get_settings()
     settings.kaf_data_dir.mkdir(parents=True, exist_ok=True)
     settings.sandbox_dir.mkdir(parents=True, exist_ok=True)
+
+
+def migrate_legacy_data_dir(
+    settings: Settings,
+    *,
+    legacy_dir: Path | None = None,
+) -> bool:
+    """Move runtime data from the old Library location into the project ``data/`` folder."""
+    target = settings.kaf_data_dir.resolve()
+    legacy = (legacy_dir or LEGACY_DATA_DIR).resolve()
+    if target == legacy or not legacy.is_dir():
+        return False
+
+    if target.exists() and any(target.iterdir()):
+        return False
+
+    target.mkdir(parents=True, exist_ok=True)
+    for item in legacy.iterdir():
+        shutil.move(str(item), str(target / item.name))
+
+    try:
+        legacy.rmdir()
+    except OSError:
+        pass
+
+    settings.sandbox_dir.mkdir(parents=True, exist_ok=True)
+    return True
 
 
 def resolve_api_token(settings: Settings) -> str:
