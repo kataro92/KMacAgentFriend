@@ -224,12 +224,13 @@ async def log_http_activity(request: Request, call_next):
 @app.get("/health")
 async def health(_: str = Depends(verify_token)):
     settings = get_settings()
-    ollama_ok = await _ollama_reachable(settings.ollama_host)
+    ollama_ok = True if settings.mock_mode else await _ollama_reachable(settings.ollama_host)
     return {
         "ok": True,
         "service": "kmac-agent-friend",
         "version": "0.1.0",
         "api_version": 4,
+        "mock_mode": settings.mock_mode,
         "ollama": ollama_ok,
         "ollama_host": settings.ollama_host,
         "model": settings.ollama_model,
@@ -555,13 +556,18 @@ async def vision_analyze(
         await _record_activity("info", "vision", "Frame persisted", {"path": str(saved)})
     await _set_status(AgentStatus.ACTING, action="vision")
     try:
-        async with inference_gate.slot("vision"):
-            result = await analyze_image(
-                image_bytes,
-                prompt,
-                ollama_host=settings.ollama_host,
-                model=settings.ollama_vlm_model,
-            )
+        if settings.mock_mode:
+            from kmac_agent_friend.mock import mock_vision_result
+
+            result = mock_vision_result()
+        else:
+            async with inference_gate.slot("vision"):
+                result = await analyze_image(
+                    image_bytes,
+                    prompt,
+                    ollama_host=settings.ollama_host,
+                    model=settings.ollama_vlm_model,
+                )
         if not result.ok:
             await _set_status(AgentStatus.ERROR, action=result.error)
             return {"ok": False, "error": result.error}
@@ -885,6 +891,16 @@ async def chat(body: ChatRequest, _: str = Depends(verify_token)):
 
     await _set_status(AgentStatus.THINKING, action="chatting")
     try:
+        if settings.mock_mode:
+            from kmac_agent_friend.mock import mock_chat_reply
+
+            result = mock_chat_reply(text)
+            if result.ok:
+                store.append("user", text)
+                store.append("assistant", result.reply)
+            agent_state.message_count += 1
+            await ws_manager.broadcast({"type": "reply", "text": result.reply})
+            return {"ok": True, "reply": result.reply, "mock": True}
         async with inference_gate.slot("chat"):
             if body.use_tools:
                 result = await chat_with_tools(text, settings=settings, store=store)
@@ -1075,14 +1091,19 @@ async def voice_turn(
         history = store.recent(limit=20)
 
         await _set_status(AgentStatus.THINKING, action="chatting")
-        await _broadcast_voice_progress("chat", f"Asking Ollama ({settings.ollama_model})")
-        async with inference_gate.slot("chat"):
-            chat = await chat_reply(
-                stt.text,
-                ollama_host=settings.ollama_host,
-                model=settings.ollama_model,
-                history=history,
-            )
+        if settings.mock_mode:
+            from kmac_agent_friend.mock import mock_chat_reply
+
+            chat = mock_chat_reply(stt.text)
+        else:
+            await _broadcast_voice_progress("chat", f"Asking Ollama ({settings.ollama_model})")
+            async with inference_gate.slot("chat"):
+                chat = await chat_reply(
+                    stt.text,
+                    ollama_host=settings.ollama_host,
+                    model=settings.ollama_model,
+                    history=history,
+                )
         if not chat.ok:
             await _set_status(AgentStatus.ERROR, action=chat.error)
             return {

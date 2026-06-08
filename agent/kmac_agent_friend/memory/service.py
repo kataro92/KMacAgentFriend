@@ -28,6 +28,17 @@ class MemoryService:
         self.settings = settings
         self.store = store or LongTermMemory.from_settings(settings)
 
+    async def _embed(self, text: str):
+        if self.settings.mock_mode:
+            from kmac_agent_friend.mock import mock_embedding
+
+            return mock_embedding(text)
+        return await embed_text(
+            text,
+            ollama_host=self.settings.ollama_host,
+            model=self.settings.ollama_embed_model,
+        )
+
     async def remember(
         self,
         text: str,
@@ -37,11 +48,7 @@ class MemoryService:
         cleaned = (text or "").strip()
         if not cleaned:
             return RememberResult(ok=False, error="Empty memory text")
-        embed = await embed_text(
-            cleaned,
-            ollama_host=self.settings.ollama_host,
-            model=self.settings.ollama_embed_model,
-        )
+        embed = await self._embed(cleaned)
         if not embed.ok or embed.embedding is None:
             return RememberResult(ok=False, error=embed.error)
         record_id = self.store.add(cleaned, embed.embedding, metadata=metadata)
@@ -53,11 +60,7 @@ class MemoryService:
             return RecallResult(ok=False, error="Empty query")
         if self.store.count() == 0:
             return RecallResult(ok=True, records=[])
-        embed = await embed_text(
-            cleaned,
-            ollama_host=self.settings.ollama_host,
-            model=self.settings.ollama_embed_model,
-        )
+        embed = await self._embed(cleaned)
         if not embed.ok or embed.embedding is None:
             return RecallResult(ok=False, error=embed.error)
         records = self.store.search(embed.embedding, k=k)
