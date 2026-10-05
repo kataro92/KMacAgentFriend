@@ -1,5 +1,7 @@
 # KMacAgentFriend
 
+> **Deprecated:** This project is no longer maintained. No further updates or support are planned.
+
 A **Mac-native personal AI agent** — menu bar gadget with a Python brain. Voice-first, 100% local (Ollama), learns in the background, and participates in AI forums.
 
 **Platform:** macOS 14+, Apple Silicon M1+ (16 GB RAM reference)
